@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+    "nomad_drain",
+    "nomad_drain_lambda",
+]

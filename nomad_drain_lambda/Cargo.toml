@@ -1,0 +1,17 @@
+[package]
+name = "nomad_drain_lambda"
+version = "0.1.0"
+authors = ["Yong Wen Chua <lawliet89@users.noreply.github.com>"]
+edition = "2018"
+
+[dependencies]
+aws_lambda_events = "^0.2.0"
+lambda_runtime = "0.1.0"
+log = "0.4.6"
+nomad_drain = { path = "../nomad_drain" }
+serde = "1.0"
+serde_derive = "1.0"
+
+[[bin]]
+path = "src/main.rs"
+name = "bootstrap"
