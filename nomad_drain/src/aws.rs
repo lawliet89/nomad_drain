@@ -106,23 +106,33 @@ impl VaultAwsAuthIamPayload {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     // mock_key, mock_secret
-    fn credentials() -> Result<AwsCredentials, crate::Error> {
+    pub(crate) fn credentials() -> Result<AwsCredentials, crate::Error> {
         let provider = rusoto_mock::MockCredentialsProvider;
         Ok(provider.credentials().wait()?)
     }
 
-    fn region() -> Region {
+    pub(crate) fn region() -> Region {
         Region::UsEast1
+    }
+
+    pub(crate) fn vault_aws_iam_payload(
+        header_value: Option<&str>,
+    ) -> Result<VaultAwsAuthIamPayload, crate::Error> {
+        let cred = credentials()?;
+        Ok(VaultAwsAuthIamPayload::new(
+            &cred,
+            header_value,
+            Some(region()),
+        ))
     }
 
     #[test]
     fn vault_aws_iam_payload_has_expected_values() -> Result<(), crate::Error> {
-        let cred = credentials()?;
-        let payload = VaultAwsAuthIamPayload::new(&cred, Some("header value"), Some(region()));
+        let payload = vault_aws_iam_payload(Some("header value"))?;
 
         assert_eq!(payload.iam_http_request_method, "POST");
         assert_eq!(
@@ -135,7 +145,9 @@ mod tests {
         );
         assert!(payload.iam_request_headers.contains_key("authorization"));
         assert_eq!(
-            payload.iam_request_headers.get(&IAM_SERVER_ID_HEADER.to_lowercase()),
+            payload
+                .iam_request_headers
+                .get(&IAM_SERVER_ID_HEADER.to_lowercase()),
             Some(&vec!["header value".to_string()])
         );
         Ok(())
