@@ -18,7 +18,7 @@ pub struct NodesInList {
     pub name: String,
     pub status: String,
     pub node_class: String,
-    pub scheduling_eligibility: String,
+    pub scheduling_eligibility: NodeEligibility,
     pub version: String,
     // We ignore
     // - Drivers
@@ -52,9 +52,6 @@ pub struct Node {
     /// Drivers information
     #[serde(default)]
     pub drivers: HashMap<String, HashMap<String, serde_json::Value>>,
-    /// Events Information
-    #[serde(default)]
-    pub events: Vec<HashMap<String, serde_json::Value>>,
     /// HTTP Address
     #[serde(rename = "HTTPAddr")]
     pub http_address: String,
@@ -69,7 +66,7 @@ pub struct Node {
     /// Reserved resources
     pub reserved: NodeResource,
     /// Scheduling Eligiblity
-    pub scheduling_eligibility: String,
+    pub scheduling_eligibility: NodeEligibility,
     /// Secret ID
     #[serde(rename = "SecretID")]
     pub secret_id: String,
@@ -82,6 +79,10 @@ pub struct Node {
     /// Whether TLS is enabled
     #[serde(rename = "TLSEnabled")]
     tls_enabled: bool,
+    // We ignore events
+    // /// Events Information
+    // #[serde(default)]
+    // pub events: Vec<HashMap<String, serde_json::Value>>,
 }
 
 /// Node Resource Details
@@ -135,6 +136,16 @@ pub struct NodePort {
     pub label: String,
     /// Port number
     pub port: u64,
+}
+
+/// Node eligibility for scheduling
+#[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeEligibility {
+    /// Eligible to receive new allocations
+    Eligible,
+    /// Ineligible for new allocations
+    Ineligible,
 }
 
 /// Get Information about a specific Node ID
@@ -232,6 +243,65 @@ pub fn find_node_by_instance_id(
     Ok(result?)
 }
 
+#[derive(Serialize, Eq, PartialEq, Clone, Debug)]
+struct NodeEligibilityRequest<'a> {
+    #[serde(rename = "NodeID")]
+    pub node_id: &'a str,
+    #[serde(rename = "Eligibility")]
+    pub eligibility: NodeEligibility,
+}
+
+#[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
+#[serde(rename_all = "PascalCase")]
+struct NodeEligibilityResponse {
+    pub eval_create_index: u64,
+    #[serde(rename = "EvalIDs")]
+    pub eval_ids: Vec<String>,
+    pub index: u64,
+    pub node_modify_index: u64,
+}
+
+/// Set a node eligibility for receiving new allocations
+///
+/// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
+/// CA certificate or require client authentication
+pub fn set_node_eligibility(
+    nomad_address: &str,
+    node_id: &str,
+    eligibility: NodeEligibility,
+    nomad_token: Option<&str>,
+    client: Option<&Client>,
+) -> Result<(), crate::Error> {
+    let client = match client {
+        Some(client) => Cow::Borrowed(client),
+        None => Cow::Owned(ClientBuilder::new().build()?),
+    };
+
+    let request = NodeEligibilityRequest {
+        node_id,
+        eligibility,
+    };
+
+    let request =
+        build_node_eligibility_request(nomad_address, node_id, &request, nomad_token, &client)?;
+    // Request is successful if the response can be deserialized
+    let _: NodeEligibilityResponse = client.execute(request)?.json()?;
+    Ok(())
+}
+
+fn build_node_eligibility_request(
+    nomad_address: &str,
+    node_id: &str,
+    payload: &NodeEligibilityRequest,
+    nomad_token: Option<&str>,
+    client: &Client,
+) -> Result<reqwest::Request, crate::Error> {
+    let address = format!("{}/v1/node/{}/eligibility", nomad_address, node_id);
+    let request = client.post(&address).json(payload);
+    let request = add_nomad_token_header(request, nomad_token);
+    Ok(request.build()?)
+}
+
 fn add_nomad_token_header(
     request_builder: RequestBuilder,
     nomad_token: Option<&str>,
@@ -283,5 +353,11 @@ mod tests {
         assert_eq!("token", actual_token.unwrap());
 
         Ok(())
+    }
+
+    #[test]
+    fn node_eligibility_response_is_deserialized_properly() {
+        let _: NodeEligibilityResponse =
+            serde_json::from_str(include_str!("../fixtures/node_eligibility.json")).unwrap();
     }
 }
