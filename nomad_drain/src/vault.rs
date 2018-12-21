@@ -76,7 +76,7 @@ pub enum TokenType {
 
 /// Payload to send to Vault for logging in via AWS IAM
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct VaultAwsIamLoginPayload<'a, 'b> {
+pub struct AwsIamLoginPayload<'a, 'b> {
     pub role: &'a str,
     #[serde(borrow, flatten)]
     pub aws_payload: Cow<'b, crate::aws::VaultAwsAuthIamPayload>,
@@ -109,12 +109,11 @@ pub fn login_aws_iam(
     match response {
         Response::Error { errors } => Err(crate::Error::InvalidVaultResponse(errors.join("; ")))?,
         Response::Response {
-            auth: Some(auth),
-            ..
-        } => {
-            Ok(auth.client_token)
-        },
-        _ => Err(crate::Error::InvalidVaultResponse("Missing authentication data".to_string()))?,
+            auth: Some(auth), ..
+        } => Ok(auth.client_token),
+        _ => Err(crate::Error::InvalidVaultResponse(
+            "Missing authentication data".to_string(),
+        ))?,
     }
 }
 
@@ -127,7 +126,7 @@ fn build_login_aws_iam_request(
 ) -> Result<reqwest::Request, crate::Error> {
     let address = url::Url::parse(address)?;
     let address = address.join(&format!("/v1/auth/{}/login", path))?;
-    let payload = VaultAwsIamLoginPayload {
+    let payload = AwsIamLoginPayload {
         role,
         aws_payload: Cow::Borrowed(aws_payload),
     };
