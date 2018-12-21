@@ -10,6 +10,8 @@ pub enum Error {
     ReqwestError(reqwest::Error),
     /// Errors related to URL parsing
     UrlParseError(url::ParseError),
+    /// Response from Vault was unexpected
+    InvalidVaultResponse(String),
 }
 
 impl fmt::Display for Error {
@@ -20,6 +22,9 @@ impl fmt::Display for Error {
             }
             Error::ReqwestError(ref inner) => inner.fmt(f),
             Error::UrlParseError(ref inner) => inner.fmt(f),
+            Error::InvalidVaultResponse(ref reason) => {
+                write!(f, "Response from Vault was unexpected: {}", reason)
+            }
         }
     }
 }
@@ -30,6 +35,7 @@ impl error::Error for Error {
             Error::CredentialsError(ref inner) => Some(inner),
             Error::ReqwestError(ref inner) => Some(inner),
             Error::UrlParseError(ref inner) => Some(inner),
+            Error::InvalidVaultResponse(_) => None,
         }
     }
 }

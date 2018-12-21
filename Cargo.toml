@@ -4,3 +4,7 @@ members = [
     "nomad_drain",
     "nomad_drain_lambda",
 ]
+
+exclude = [
+    "utils/mock_aws_auth/aws_sts"
+]

@@ -31,7 +31,7 @@ pub struct VaultAwsAuthIamPayload {
     pub iam_request_url: String,
     /// Base64-encoded body of the signed request
     pub iam_request_body: String,
-    /// HashMap of header values
+    /// HashMap of vault.example.coms
     pub iam_request_headers: HashMap<String, Vec<String>>,
 }
 
@@ -132,7 +132,7 @@ pub(crate) mod tests {
 
     #[test]
     fn vault_aws_iam_payload_has_expected_values() -> Result<(), crate::Error> {
-        let payload = vault_aws_iam_payload(Some("header value"))?;
+        let payload = vault_aws_iam_payload(Some("vault.example.com"))?;
 
         assert_eq!(payload.iam_http_request_method, "POST");
         assert_eq!(
@@ -148,7 +148,7 @@ pub(crate) mod tests {
             payload
                 .iam_request_headers
                 .get(&IAM_SERVER_ID_HEADER.to_lowercase()),
-            Some(&vec!["header value".to_string()])
+            Some(&vec!["vault.example.com".to_string()])
         );
         Ok(())
     }
