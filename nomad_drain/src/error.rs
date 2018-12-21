@@ -12,6 +12,8 @@ pub enum Error {
     UrlParseError(url::ParseError),
     /// Response from Vault was unexpected
     InvalidVaultResponse(String),
+    /// Nomad Node not found
+    NomadNodeNotFound { instance_id: String },
 }
 
 impl fmt::Display for Error {
@@ -25,6 +27,11 @@ impl fmt::Display for Error {
             Error::InvalidVaultResponse(ref reason) => {
                 write!(f, "Response from Vault was unexpected: {}", reason)
             }
+            Error::NomadNodeNotFound { ref instance_id } => write!(
+                f,
+                "Unable to find the nomad node with instance ID: {}",
+                instance_id
+            ),
         }
     }
 }
@@ -35,7 +42,7 @@ impl error::Error for Error {
             Error::CredentialsError(ref inner) => Some(inner),
             Error::ReqwestError(ref inner) => Some(inner),
             Error::UrlParseError(ref inner) => Some(inner),
-            Error::InvalidVaultResponse(_) => None,
+            Error::InvalidVaultResponse(_) | Error::NomadNodeNotFound { .. } => None,
         }
     }
 }

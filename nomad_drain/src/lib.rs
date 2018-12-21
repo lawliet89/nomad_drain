@@ -1,5 +1,6 @@
 pub mod aws;
 mod error;
+pub mod nomad;
 pub mod vault;
 
 pub use crate::error::Error;

@@ -97,11 +97,11 @@ pub fn login_aws_iam(
     aws_auth_path: &str,
     aws_auth_role: &str,
     aws_payload: &crate::aws::VaultAwsAuthIamPayload,
-    client: Option<Client>,
+    client: Option<&Client>,
 ) -> Result<String, crate::Error> {
     let client = match client {
-        Some(client) => client,
-        None => ClientBuilder::new().build()?,
+        Some(client) => Cow::Borrowed(client),
+        None => Cow::Owned(ClientBuilder::new().build()?),
     };
 
     let request = build_login_aws_iam_request(
@@ -148,11 +148,11 @@ pub fn get_nomad_token(
     nomad_path: &str,
     nomad_role: &str,
     vault_token: &str,
-    client: Option<Client>,
+    client: Option<&Client>,
 ) -> Result<String, crate::Error> {
     let client = match client {
-        Some(client) => client,
-        None => ClientBuilder::new().build()?,
+        Some(client) => Cow::Borrowed(client),
+        None => Cow::Owned(ClientBuilder::new().build()?),
     };
 
     let request =

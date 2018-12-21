@@ -1,0 +1,152 @@
+{
+    "Attributes": {
+        "driver.exec": "1",
+        "kernel.name": "linux",
+        "consul.version": "1.4.0",
+        "driver.docker.volumes.enabled": "1",
+        "unique.storage.bytestotal": "51976970240",
+        "unique.platform.aws.local-ipv4": "10.161.242.244",
+        "kernel.version": "4.4.0-1072-aws",
+        "unique.storage.volume": "/dev/nvme0n1p1",
+        "unique.platform.aws.hostname": "ip-10-161-242-244.ap-southeast-1.compute.internal",
+        "vault.version": "1.0.1",
+        "vault.cluster_id": "06828044-8895-653e-875b-5b4ca3b49e71",
+        "nomad.version": "0.8.6",
+        "platform.aws.ami-id": "ami-ami-id",
+        "cpu.arch": "amd64",
+        "unique.cgroup.mountpoint": "/sys/fs/cgroup",
+        "nomad.revision": "ab54ebcfcde062e9482558b7c052702d4cb8aa1b+CHANGES",
+        "cpu.frequency": "3000",
+        "unique.hostname": "ip-10-161-242-244",
+        "unique.platform.aws.instance-id": "i-instance-id",
+        "os.version": "16.04",
+        "unique.consul.name": "i-instance-id",
+        "vault.cluster_name": "vault-cluster-5a54b00b",
+        "consul.revision": "0bddfa23a",
+        "unique.platform.aws.local-hostname": "ip-10-161-242-244.ap-southeast-1.compute.internal",
+        "unique.storage.bytesfree": "49475432448",
+        "driver.docker": "1",
+        "platform.aws.placement.availability-zone": "ap-southeast-1c",
+        "os.name": "ubuntu",
+        "platform.aws.instance-type": "c5.large",
+        "unique.network.ip-address": "10.161.242.244",
+        "cpu.modelname": "Intel(R) Xeon(R) Platinum 8124M CPU @ 3.00GHz",
+        "cpu.numcores": "2",
+        "cpu.totalcompute": "6000",
+        "memory.totalbytes": "3892252672",
+        "vault.accessible": "true",
+        "driver.docker.bridge_ip": "172.17.0.1",
+        "os.signals": "SIGSYS,SIGTERM,SIGTSTP,SIGHUP,SIGINT,SIGIOT,SIGURG,SIGUSR1,SIGALRM,SIGKILL,SIGPIPE,SIGABRT,SIGXFSZ,SIGSTOP,SIGTRAP,SIGXCPU,SIGBUS,SIGCHLD,SIGWINCH,SIGQUIT,SIGTTIN,SIGTTOU,SIGUSR2,SIGCONT,SIGIO,SIGPROF,SIGFPE,SIGILL,SIGSEGV",
+        "driver.docker.version": "18.06.0-ce",
+        "consul.server": "false",
+        "consul.datacenter": "ap-southeast-1",
+        "unique.platform.aws.public-ipv4": "13.229.147.175",
+        "unique.platform.aws.public-hostname": "ec2-13-229-147-175.ap-southeast-1.compute.amazonaws.com"
+    },
+    "ComputedClass": "v1:7416316181764523378",
+    "CreateIndex": 367542,
+    "Datacenter": "ap-southeast-1c",
+    "Drain": false,
+    "DrainStrategy": null,
+    "Drivers": {
+        "rkt": {
+            "Attributes": null,
+            "Detected": false,
+            "HealthDescription": "Driver rkt is not detected",
+            "Healthy": false,
+            "UpdateTime": "2018-12-20T03:35:17.292520556Z"
+        },
+        "docker": {
+            "Attributes": {
+                "driver.docker.volumes.enabled": "1",
+                "driver.docker.bridge_ip": "172.17.0.1",
+                "driver.docker.version": "18.06.0-ce"
+            },
+            "Detected": true,
+            "HealthDescription": "Driver is available and responsive",
+            "Healthy": true,
+            "UpdateTime": "2018-12-20T03:35:02.292637636Z"
+        },
+        "exec": {
+            "Attributes": null,
+            "Detected": true,
+            "HealthDescription": "Driver exec is detected",
+            "Healthy": true,
+            "UpdateTime": "2018-12-20T03:35:17.291239727Z"
+        },
+        "raw_exec": {
+            "Attributes": null,
+            "Detected": false,
+            "HealthDescription": "Driver raw_exec is not detected",
+            "Healthy": false,
+            "UpdateTime": "2018-11-30T06:25:02.290915538Z"
+        },
+        "java": {
+            "Attributes": null,
+            "Detected": false,
+            "HealthDescription": "Driver java is not detected",
+            "Healthy": false,
+            "UpdateTime": "2018-11-30T06:25:02.290961363Z"
+        },
+        "qemu": {
+            "Attributes": null,
+            "Detected": false,
+            "HealthDescription": "Driver qemu is not detected",
+            "Healthy": false,
+            "UpdateTime": "2018-11-30T06:25:02.290992986Z"
+        }
+    },
+    "Events": [
+        {
+            "CreateIndex": 0,
+            "Details": null,
+            "Message": "Node registered",
+            "Subsystem": "Cluster",
+            "Timestamp": "2018-11-30T06:25:02Z"
+        }
+    ],
+    "HTTPAddr": "10.161.242.244:4646",
+    "ID": "02802087-8786-fdf6-4497-98445c891fb7",
+    "Links": {
+        "consul": "ap-southeast-1.i-instance-id",
+        "aws.ec2": "ap-southeast-1c.i-instance-id"
+    },
+    "Meta": null,
+    "ModifyIndex": 489621,
+    "Name": "i-instance-id",
+    "NodeClass": "general",
+    "Reserved": {
+        "CPU": 0,
+        "DiskMB": 0,
+        "IOPS": 0,
+        "MemoryMB": 0,
+        "Networks": null
+    },
+    "Resources": {
+        "CPU": 6000,
+        "DiskMB": 47183,
+        "IOPS": 0,
+        "MemoryMB": 3711,
+        "Networks": [
+            {
+                "CIDR": "10.161.242.244/32",
+                "Device": "eth0",
+                "DynamicPorts": null,
+                "IP": "10.161.242.244",
+                "MBits": 500,
+                "ReservedPorts": [
+                    {
+                        "Label": "http",
+                        "Value": 28582
+                    }
+                ]
+            }
+        ]
+    },
+    "SchedulingEligibility": "eligible",
+    "SecretID": "",
+    "Status": "ready",
+    "StatusDescription": "",
+    "StatusUpdatedAt": 1545377043,
+    "TLSEnabled": false
+}
