@@ -29,13 +29,17 @@ services:
     ports:
       - 8200:8200
     healthcheck:
-      test: ["CMD", "curl", "http://127.0.0.1:8200/v1/sys/health"]
+      test: ["CMD", "vault", "status", "-address", "http://127.0.0.1:8200"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-    # depends_on:
-    #   aws_iam:
-    #     condition: service_healthy
-    #   aws_sts:
-    #     condition: service_healthy
+  configure:
+    build: configure
+    depends_on:
+      aws_iam:
+        condition: service_healthy
+      aws_sts:
+        condition: service_healthy
+      vault:
+        condition: service_healthy

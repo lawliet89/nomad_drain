@@ -28,8 +28,8 @@ pub fn login_to_vault(
 
     vault::login_aws_iam(
         &vault_address,
-        vault_auth_role,
         vault_auth_path,
+        vault_auth_role,
         &aws_payload,
         None,
     )
@@ -61,6 +61,28 @@ mod tests {
 
         assert_eq!(credentials.aws_access_key_id(), access_key);
         assert_eq!(credentials.aws_secret_access_key(), secret_key);
+
+        Ok(())
+    }
+
+    /// Requires Mock server for this test
+    #[test]
+    fn login_to_vault_is_successful() -> Result<(), crate::Error> {
+        let credentials = rusoto_core::credential::StaticProvider::new_minimal(
+            "test_key".to_string(),
+            "test_secret".to_string(),
+        );
+        let credentials = credentials.credentials().wait()?;
+
+        let vault_token = login_to_vault(
+            &crate::vault::tests::vault_address(),
+            "aws",
+            "default",
+            &credentials,
+            Some("vault.example.com"),
+            None,
+        )?;
+        assert!(vault_token.len() > 0);
 
         Ok(())
     }

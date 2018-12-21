@@ -134,12 +134,12 @@ fn build_login_aws_iam_request(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use std::env;
 
-    fn vault_address() -> String {
+    pub(crate) fn vault_address() -> String {
         env::var("VAULT_ADDR").unwrap_or_else(|_| "http://127.0.0.1:8200".to_string())
     }
 
@@ -167,6 +167,7 @@ mod tests {
     }
 
     /// Requires Mock AWS API and Vault server
+    /// This test does not verify if the signature from rusoto is correct.
     #[test]
     fn login_aws_with_vault_is_successful() -> Result<(), crate::Error> {
         let address = vault_address();
