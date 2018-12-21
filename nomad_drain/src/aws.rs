@@ -31,7 +31,7 @@ pub struct VaultAwsAuthIamPayload {
     pub iam_request_url: String,
     /// Base64-encoded body of the signed request
     pub iam_request_body: String,
-    /// HashMap of vault.example.coms
+    /// Headers of the signed request
     pub iam_request_headers: HashMap<String, Vec<String>>,
 }
 
