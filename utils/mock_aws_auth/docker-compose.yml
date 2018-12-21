@@ -12,11 +12,12 @@ services:
       retries: 3
       start_period: 10s
   aws_sts:
-    build: aws_sts
+    build: aws
+    command: ["moto_server", "sts", "-H", "0.0.0.0", "-p", "8000"]
     ports:
       - 5002:8000
     healthcheck:
-      test: ["CMD", "curl", "http://127.0.0.1:8000/"]
+      test: ["CMD", "curl", "http://127.0.0.1:8000/moto-api"]
       interval: 30s
       timeout: 10s
       retries: 3
