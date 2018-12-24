@@ -1,10 +1,17 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 
-use reqwest::{Client, ClientBuilder, RequestBuilder};
+use reqwest::{Client as HttpClient, ClientBuilder, RequestBuilder};
 use serde::{Deserialize, Serialize};
 
 const NOMAD_AUTH_HEADER: &str = "X-Nomad-Token";
+
+/// Nomad API Client
+#[derive(Clone, Debug)]
+pub struct Client {
+    address: String,
+    token: Option<String>,
+    client: HttpClient,
+}
 
 /// Node details in List of nodes
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
@@ -194,101 +201,6 @@ pub enum NodeEligibility {
     Ineligible,
 }
 
-/// Get Information about a specific Node ID
-///
-/// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
-/// CA certificate or require client authentication
-pub fn node_details(
-    nomad_address: &str,
-    node_id: &str,
-    nomad_token: Option<&str>,
-    client: Option<&Client>,
-) -> Result<Node, crate::Error> {
-    let client = match client {
-        Some(client) => Cow::Borrowed(client),
-        None => Cow::Owned(ClientBuilder::new().build()?),
-    };
-
-    let request = build_node_details_request(nomad_address, node_id, nomad_token, &client)?;
-    let details: Node = client.execute(request)?.json()?;
-    Ok(details)
-}
-
-/// Build requests to get node details
-fn build_node_details_request(
-    nomad_address: &str,
-    node_id: &str,
-    nomad_token: Option<&str>,
-    client: &Client,
-) -> Result<reqwest::Request, crate::Error> {
-    let address = format!("{}/v1/node/{}", nomad_address, node_id);
-    let request = client.get(&address);
-    let request = add_nomad_token_header(request, nomad_token);
-    Ok(request.build()?)
-}
-
-/// Return a list of nodes
-fn nodes(
-    nomad_address: &str,
-    nomad_token: Option<&str>,
-    client: Option<&Client>,
-) -> Result<Vec<NodesInList>, crate::Error> {
-    let client = match client {
-        Some(client) => Cow::Borrowed(client),
-        None => Cow::Owned(ClientBuilder::new().build()?),
-    };
-
-    let request = build_nodes_request(nomad_address, nomad_token, &client)?;
-    let details = client.execute(request)?.json()?;
-    Ok(details)
-}
-
-/// Build request to retrieve list of nodes
-fn build_nodes_request(
-    nomad_address: &str,
-    nomad_token: Option<&str>,
-    client: &Client,
-) -> Result<reqwest::Request, crate::Error> {
-    let address = format!("{}/v1/nodes", nomad_address);
-    let request = client.get(&address);
-    let request = add_nomad_token_header(request, nomad_token);
-    Ok(request.build()?)
-}
-
-/// Given an AWS Instance ID, find the Node details
-///
-/// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
-/// CA certificate or require client authentication
-pub fn find_node_by_instance_id(
-    instance_id: &str,
-    nomad_address: &str,
-    nomad_token: Option<&str>,
-    client: Option<&Client>,
-) -> Result<Node, crate::Error> {
-    let client = match client {
-        Some(client) => Cow::Borrowed(client),
-        None => Cow::Owned(ClientBuilder::new().build()?),
-    };
-
-    let nodes = nodes(nomad_address, nomad_token, Some(&client))?;
-    let result = nodes
-        .into_iter()
-        .filter(|node| node.status == "ready")
-        .map(|node| node_details(nomad_address, &node.id, nomad_token, Some(&client)))
-        .find(|details| match details {
-            Ok(details) => match details.attributes.get("unique.platform.aws.instance-id") {
-                Some(id) => id == instance_id,
-                None => false,
-            },
-            Err(_) => false,
-        });
-
-    let result = result.ok_or_else(|| crate::Error::NomadNodeNotFound {
-        instance_id: instance_id.to_string(),
-    })?;
-    Ok(result?)
-}
-
 #[derive(Serialize, Eq, PartialEq, Clone, Debug)]
 struct NodeEligibilityRequest<'a> {
     #[serde(rename = "NodeID")]
@@ -307,57 +219,6 @@ struct NodeEligibilityResponse {
     pub node_modify_index: u128,
 }
 
-/// Set a node eligibility for receiving new allocations
-///
-/// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
-/// CA certificate or require client authentication
-pub fn set_node_eligibility(
-    nomad_address: &str,
-    node_id: &str,
-    eligibility: NodeEligibility,
-    nomad_token: Option<&str>,
-    client: Option<&Client>,
-) -> Result<(), crate::Error> {
-    let client = match client {
-        Some(client) => Cow::Borrowed(client),
-        None => Cow::Owned(ClientBuilder::new().build()?),
-    };
-
-    let request = NodeEligibilityRequest {
-        node_id,
-        eligibility,
-    };
-
-    let request =
-        build_node_eligibility_request(nomad_address, node_id, &request, nomad_token, &client)?;
-    // Request is successful if the response can be deserialized
-    let _: NodeEligibilityResponse = client.execute(request)?.json()?;
-    Ok(())
-}
-
-fn build_node_eligibility_request(
-    nomad_address: &str,
-    node_id: &str,
-    payload: &NodeEligibilityRequest,
-    nomad_token: Option<&str>,
-    client: &Client,
-) -> Result<reqwest::Request, crate::Error> {
-    let address = format!("{}/v1/node/{}/eligibility", nomad_address, node_id);
-    let request = client.post(&address).json(payload);
-    let request = add_nomad_token_header(request, nomad_token);
-    Ok(request.build()?)
-}
-
-fn add_nomad_token_header(
-    request_builder: RequestBuilder,
-    nomad_token: Option<&str>,
-) -> RequestBuilder {
-    match nomad_token {
-        Some(token) => request_builder.header(NOMAD_AUTH_HEADER, token),
-        None => request_builder,
-    }
-}
-
 #[derive(Serialize, Eq, PartialEq, Clone, Debug)]
 struct NodeDrainRequest<'a, 'b> {
     #[serde(rename = "NodeID")]
@@ -366,53 +227,165 @@ struct NodeDrainRequest<'a, 'b> {
     pub drain_spec: &'b DrainSpec,
 }
 
-/// These are the same
+// These are the same
 type NodeDrainResponse = NodeEligibilityResponse;
 
-/// Mark the node for draining
-///
-/// You can optionally specify a `DrainSpec`. If you don't provide one, we will use the default.
-///
-/// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
-/// CA certificate or require client authentication
-pub fn set_node_drain(
-    nomad_address: &str,
-    node_id: &str,
-    drain_spec: Option<DrainSpec>,
-    nomad_token: Option<&str>,
-    client: Option<&Client>,
-) -> Result<(), crate::Error> {
-    let client = match client {
-        Some(client) => Cow::Borrowed(client),
-        None => Cow::Owned(ClientBuilder::new().build()?),
-    };
-    let drain_spec = drain_spec.unwrap_or_default();
-    let payload = NodeDrainRequest {
-        node_id,
-        drain_spec: &drain_spec,
-    };
-    let request = build_drain_request(nomad_address, node_id, &payload, nomad_token, &client)?;
-    // Request is successful if the response can be deserialized
-    let _: NodeDrainResponse = client.execute(request)?.json()?;
-    Ok(())
-}
+impl Client {
+    pub fn new<S1, S2>(
+        address: S1,
+        token: Option<S2>,
+        client: Option<HttpClient>,
+    ) -> Result<Self, crate::Error>
+    where
+        S1: AsRef<str>,
+        S2: AsRef<str>,
+    {
+        let client = match client {
+            Some(client) => client,
+            None => ClientBuilder::new().build()?,
+        };
 
-fn build_drain_request(
-    nomad_address: &str,
-    node_id: &str,
-    payload: &NodeDrainRequest,
-    nomad_token: Option<&str>,
-    client: &Client,
-) -> Result<reqwest::Request, crate::Error> {
-    let address = format!("{}/v1/node/{}/drain", nomad_address, node_id);
-    let request = client.post(&address).json(payload);
-    let request = add_nomad_token_header(request, nomad_token);
-    Ok(request.build()?)
+        Ok(Self {
+            client,
+            address: address.as_ref().to_string(),
+            token: token.map(|s| s.as_ref().to_string()),
+        })
+    }
+
+    /// Get Information about a specific Node ID
+    ///
+    /// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
+    /// CA certificate or require client authentication
+    pub fn node_details(&self, node_id: &str) -> Result<Node, crate::Error> {
+        let request = self.build_node_details_request(node_id)?;
+        let details: Node = self.client.execute(request)?.json()?;
+        Ok(details)
+    }
+
+    /// Build requests to get node details
+    fn build_node_details_request(&self, node_id: &str) -> Result<reqwest::Request, crate::Error> {
+        let address = format!("{}/v1/node/{}", &self.address, node_id);
+        let request = self.client.get(&address);
+        let request = self.add_nomad_token_header(request);
+        Ok(request.build()?)
+    }
+
+    /// Return a list of nodes
+    fn nodes(&self) -> Result<Vec<NodesInList>, crate::Error> {
+        let request = self.build_nodes_request()?;
+        let details = self.client.execute(request)?.json()?;
+        Ok(details)
+    }
+
+    /// Build request to retrieve list of nodes
+    fn build_nodes_request(&self) -> Result<reqwest::Request, crate::Error> {
+        let address = format!("{}/v1/nodes", &self.address);
+        let request = self.client.get(&address);
+        let request = self.add_nomad_token_header(request);
+        Ok(request.build()?)
+    }
+
+    /// Given an AWS Instance ID, find the Node details
+    ///
+    /// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
+    /// CA certificate or require client authentication
+    pub fn find_node_by_instance_id(&self, instance_id: &str) -> Result<Node, crate::Error> {
+        let nodes = self.nodes()?;
+        let result = nodes
+            .into_iter()
+            .filter(|node| node.status == "ready")
+            .map(|node| self.node_details(&node.id))
+            .find(|details| match details {
+                Ok(details) => match details.attributes.get("unique.platform.aws.instance-id") {
+                    Some(id) => id == instance_id,
+                    None => false,
+                },
+                Err(_) => false,
+            });
+
+        let result = result.ok_or_else(|| crate::Error::NomadNodeNotFound {
+            instance_id: instance_id.to_string(),
+        })?;
+        Ok(result?)
+    }
+
+    /// Set a node eligibility for receiving new allocations
+    ///
+    /// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
+    /// CA certificate or require client authentication
+    pub fn set_node_eligibility(
+        &self,
+        node_id: &str,
+        eligibility: NodeEligibility,
+    ) -> Result<(), crate::Error> {
+        let request = NodeEligibilityRequest {
+            node_id,
+            eligibility,
+        };
+
+        let request = self.build_node_eligibility_request(node_id, &request)?;
+        // Request is successful if the response can be deserialized
+        let _: NodeEligibilityResponse = self.client.execute(request)?.json()?;
+        Ok(())
+    }
+
+    fn build_node_eligibility_request(
+        &self,
+        node_id: &str,
+        payload: &NodeEligibilityRequest,
+    ) -> Result<reqwest::Request, crate::Error> {
+        let address = format!("{}/v1/node/{}/eligibility", self.address, node_id);
+        let request = self.client.post(&address).json(payload);
+        let request = self.add_nomad_token_header(request);
+        Ok(request.build()?)
+    }
+
+    /// Mark the node for draining
+    ///
+    /// You can optionally specify a `DrainSpec`. If you don't provide one, we will use the default.
+    ///
+    /// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
+    /// CA certificate or require client authentication
+    pub fn set_node_drain(
+        &self,
+        node_id: &str,
+        drain_spec: Option<DrainSpec>,
+    ) -> Result<(), crate::Error> {
+        let drain_spec = drain_spec.unwrap_or_default();
+        let payload = NodeDrainRequest {
+            node_id,
+            drain_spec: &drain_spec,
+        };
+        let request = self.build_drain_request(node_id, &payload)?;
+        // Request is successful if the response can be deserialized
+        let _: NodeDrainResponse = self.client.execute(request)?.json()?;
+        Ok(())
+    }
+
+    fn build_drain_request(
+        &self,
+        node_id: &str,
+        payload: &NodeDrainRequest,
+    ) -> Result<reqwest::Request, crate::Error> {
+        let address = format!("{}/v1/node/{}/drain", &self.address, node_id);
+        let request = self.client.post(&address).json(payload);
+        let request = self.add_nomad_token_header(request);
+        Ok(request.build()?)
+    }
+
+    fn add_nomad_token_header(&self, request_builder: RequestBuilder) -> RequestBuilder {
+        match &self.token {
+            Some(token) => request_builder.header(NOMAD_AUTH_HEADER, token.as_str()),
+            None => request_builder,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const NOMAD_ADDRESS: &str = "http://127.0.0.1:4646";
 
     fn node_fixture() -> &'static str {
         include_str!("../fixtures/nomad_node.json")
@@ -420,6 +393,10 @@ mod tests {
 
     fn nodes_fixture() -> &'static str {
         include_str!("../fixtures/nomad_nodes.json")
+    }
+
+    fn nomad_client() -> Client {
+        Client::new(NOMAD_ADDRESS, Some("token"), None).expect("Not to fail")
     }
 
     #[test]
@@ -436,12 +413,11 @@ mod tests {
 
     #[test]
     fn build_node_details_request_is_built_properly() -> Result<(), crate::Error> {
-        let nomad_address = "http://127.0.0.1:4646";
-        let client = ClientBuilder::new().build()?;
-        let request = build_node_details_request(nomad_address, "id", Some("token"), &client)?;
+        let client = nomad_client();
+        let request = client.build_node_details_request("id")?;
 
         assert_eq!(
-            format!("{}/v1/node/{}", nomad_address, "id"),
+            format!("{}/v1/node/{}", NOMAD_ADDRESS, "id"),
             request.url().to_string()
         );
         assert_eq!(&reqwest::Method::GET, request.method());
