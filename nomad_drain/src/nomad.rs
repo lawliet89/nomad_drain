@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use reqwest::{Client, ClientBuilder, RequestBuilder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 const NOMAD_AUTH_HEADER: &str = "X-Nomad-Token";
 

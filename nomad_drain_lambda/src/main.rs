@@ -2,7 +2,7 @@ use std::error::Error;
 
 use aws_lambda_events::event::autoscaling::AutoScalingEvent as Event;
 use lambda_runtime::{error::HandlerError, lambda, Context};
-use serde_derive::Serialize;
+use serde::Serialize;
 
 #[derive(Serialize)]
 struct HandlerResult {

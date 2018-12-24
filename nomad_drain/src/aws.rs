@@ -6,7 +6,7 @@ use rusoto_core::param::{Params, ServiceParams};
 use rusoto_core::signature::{SignedRequest, SignedRequestPayload};
 use rusoto_core::Region;
 use rusoto_core::{DefaultCredentialsProvider, ProvideAwsCredentials};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 // Reference:
 // https://github.com/hashicorp/vault/blob/d12547c7faa9c216d1411827bc16606535cb3e61/builtin/credential/aws/path_login.go#L1640

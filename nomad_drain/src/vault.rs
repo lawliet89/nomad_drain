@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use reqwest::{Client, ClientBuilder};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 /// Generic Vault Response
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
