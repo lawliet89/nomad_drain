@@ -167,12 +167,21 @@ pub struct DrainStrategy {
 
 /// Specification for draining
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
-#[serde(rename_all = "PascalCase")]
+#[serde(default, rename_all = "PascalCase")]
 pub struct DrainSpec {
     /// Deadline in seconds
     pub deadline: u64,
     /// Whether system jobs are ignored
     pub ignore_system_jobs: bool,
+}
+
+impl Default for DrainSpec {
+    fn default() -> Self {
+        Self {
+            deadline: 3600, // 1 hour
+            ignore_system_jobs: false,
+        }
+    }
 }
 
 /// Node eligibility for scheduling
@@ -349,6 +358,58 @@ fn add_nomad_token_header(
     }
 }
 
+#[derive(Serialize, Eq, PartialEq, Clone, Debug)]
+struct NodeDrainRequest<'a, 'b> {
+    #[serde(rename = "NodeID")]
+    pub node_id: &'a str,
+    #[serde(rename = "DrainSpec")]
+    pub drain_spec: &'b DrainSpec,
+}
+
+/// These are the same
+type NodeDrainResponse = NodeEligibilityResponse;
+
+/// Mark the node for draining
+///
+/// You can optionally specify a `DrainSpec`. If you don't provide one, we will use the default.
+///
+/// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
+/// CA certificate or require client authentication
+pub fn set_node_drain(
+    nomad_address: &str,
+    node_id: &str,
+    drain_spec: Option<DrainSpec>,
+    nomad_token: Option<&str>,
+    client: Option<&Client>,
+) -> Result<(), crate::Error> {
+    let client = match client {
+        Some(client) => Cow::Borrowed(client),
+        None => Cow::Owned(ClientBuilder::new().build()?),
+    };
+    let drain_spec = drain_spec.unwrap_or_default();
+    let payload = NodeDrainRequest {
+        node_id,
+        drain_spec: &drain_spec,
+    };
+    let request = build_drain_request(nomad_address, node_id, &payload, nomad_token, &client)?;
+    // Request is successful if the response can be deserialized
+    let _: NodeDrainResponse = client.execute(request)?.json()?;
+    Ok(())
+}
+
+fn build_drain_request(
+    nomad_address: &str,
+    node_id: &str,
+    payload: &NodeDrainRequest,
+    nomad_token: Option<&str>,
+    client: &Client,
+) -> Result<reqwest::Request, crate::Error> {
+    let address = format!("{}/v1/node/{}/drain", nomad_address, node_id);
+    let request = client.post(&address).json(payload);
+    let request = add_nomad_token_header(request, nomad_token);
+    Ok(request.build()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,5 +457,11 @@ mod tests {
     fn node_eligibility_response_is_deserialized_properly() {
         let _: NodeEligibilityResponse =
             serde_json::from_str(include_str!("../fixtures/node_eligibility.json")).unwrap();
+    }
+
+    #[test]
+    fn node_drain_response_is_deserialized_properly() {
+        let _: NodeDrainResponse =
+            serde_json::from_str(include_str!("../fixtures/node_drain.json")).unwrap();
     }
 }
