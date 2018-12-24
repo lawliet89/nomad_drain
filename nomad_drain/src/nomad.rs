@@ -20,14 +20,14 @@ pub struct NodesInList {
     pub node_class: String,
     pub scheduling_eligibility: NodeEligibility,
     pub version: String,
-    // We ignore
-    // - Drivers
-    // - ModifyIndex
-    // - Status
-    // - StatusDescription
+    pub drivers: HashMap<String, DriverInfo>,
+    pub modify_index: u128,
+    pub status_description: String,
 }
 
 /// Node Data returned from Nomad API
+///
+/// [Reference](https://github.com/hashicorp/nomad-java-sdk/blob/master/sdk/src/main/java/com/hashicorp/nomad/apimodel/Node.java)
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct Node {
@@ -41,7 +41,7 @@ pub struct Node {
     /// Computed class of the node
     pub computed_class: String,
     /// Create index
-    pub create_index: u64,
+    pub create_index: u128,
     /// Data centre the node is in
     pub datacenter: String,
     /// Whether the node is in a draining state
@@ -51,7 +51,7 @@ pub struct Node {
     pub drain_strategy: Option<String>,
     /// Drivers information
     #[serde(default)]
-    pub drivers: HashMap<String, HashMap<String, serde_json::Value>>,
+    pub drivers: HashMap<String, DriverInfo>,
     /// HTTP Address
     #[serde(rename = "HTTPAddr")]
     pub http_address: String,
@@ -62,9 +62,9 @@ pub struct Node {
     #[serde(default)]
     pub meta: Option<HashMap<String, String>>,
     /// Modify Index
-    pub modify_index: u64,
+    pub modify_index: u128,
     /// Reserved resources
-    pub reserved: NodeResource,
+    pub reserved: Resource,
     /// Scheduling Eligiblity
     pub scheduling_eligibility: NodeEligibility,
     /// Secret ID
@@ -85,9 +85,26 @@ pub struct Node {
     // pub events: Vec<HashMap<String, serde_json::Value>>,
 }
 
+/// Node Driver Information
+#[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
+#[serde(rename_all = "PascalCase")]
+pub struct DriverInfo {
+    /// Driver specific attributes
+    #[serde(default)]
+    pub attributes: Option<HashMap<String, String>>,
+    /// Whether the driver is detcted
+    pub detected: bool,
+    /// Healthy or not
+    pub healthy: bool,
+    /// Description of health
+    pub health_description: String,
+    /// Time updated
+    pub update_time: chrono::DateTime<chrono::Utc>,
+}
+
 /// Node Resource Details
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
-pub struct NodeResource {
+pub struct Resource {
     /// CPU in MHz
     #[serde(rename = "CPU")]
     pub cpu: u64,
@@ -102,12 +119,12 @@ pub struct NodeResource {
     pub memory: u64,
     /// Networks
     #[serde(default, rename = "Networks")]
-    pub networks: Option<Vec<NodeNetwork>>,
+    pub networks: Option<Vec<NetworkResource>>,
 }
 
 /// Node Network details
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
-pub struct NodeNetwork {
+pub struct NetworkResource {
     /// CIDR of the network
     #[serde(rename = "CIDR")]
     pub cidr: String,
@@ -116,7 +133,7 @@ pub struct NodeNetwork {
     pub device: String,
     /// List of dynamic ports
     #[serde(default, rename = "DynamicPorts")]
-    pub dynamic_ports: Vec<NodePort>,
+    pub dynamic_ports: Vec<Port>,
     /// IP Address
     #[serde(rename = "IP")]
     pub ip: String,
@@ -125,17 +142,37 @@ pub struct NodeNetwork {
     pub mbits: u64,
     /// Reserved Ports
     #[serde(default, rename = "ReservedPorts")]
-    pub reserved_ports: Vec<NodePort>,
+    pub reserved_ports: Vec<Port>,
 }
 
 /// Node Port details
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
 #[serde(rename_all = "PascalCase")]
-pub struct NodePort {
+pub struct Port {
     /// Label of the port
     pub label: String,
     /// Port number
     pub port: u64,
+}
+
+/// Drain Strategy
+#[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
+#[serde(rename_all = "PascalCase")]
+pub struct DrainStrategy {
+    /// Specification for draining
+    pub drain_spec: DrainSpec,
+    /// Deadline where drain must complete
+    pub force_deadline: chrono::DateTime<chrono::Utc>,
+}
+
+/// Specification for draining
+#[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
+#[serde(rename_all = "PascalCase")]
+pub struct DrainSpec {
+    /// Deadline in seconds
+    pub deadline: u64,
+    /// Whether system jobs are ignored
+    pub ignore_system_jobs: bool,
 }
 
 /// Node eligibility for scheduling
@@ -254,11 +291,11 @@ struct NodeEligibilityRequest<'a> {
 #[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
 #[serde(rename_all = "PascalCase")]
 struct NodeEligibilityResponse {
-    pub eval_create_index: u64,
+    pub eval_create_index: u128,
     #[serde(rename = "EvalIDs")]
     pub eval_ids: Vec<String>,
-    pub index: u64,
-    pub node_modify_index: u64,
+    pub index: u128,
+    pub node_modify_index: u128,
 }
 
 /// Set a node eligibility for receiving new allocations

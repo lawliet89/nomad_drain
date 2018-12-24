@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 base64 = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
 futures = "0.1"
 log = "0.4"
 reqwest = "0.9.5"

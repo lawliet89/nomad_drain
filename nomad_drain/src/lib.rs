@@ -1,5 +1,6 @@
-pub mod aws;
 mod error;
+
+pub mod aws;
 pub mod nomad;
 pub mod vault;
 
