@@ -309,11 +309,11 @@ pub(crate) mod tests {
 }
 "#;
         let data = match serde_json::from_str::<Response>(json).unwrap() {
-            Response::Response(ResponseData{ data, .. }) => data,
+            Response::Response(ResponseData { data, .. }) => data,
             _ => panic!("Invalid deserialization"),
         };
         let nomad = data.unwrap();
-        assert_eq!(nomad.get("secret_id").unwrap(), "secret");
+        assert_eq!(nomad["secret_id"], "secret");
     }
 
     #[test]

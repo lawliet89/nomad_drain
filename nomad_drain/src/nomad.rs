@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use reqwest::{Client as HttpClient, ClientBuilder, RequestBuilder};
 use serde::{Deserialize, Serialize};
 
 const NOMAD_AUTH_HEADER: &str = "X-Nomad-Token";
+const NOMAD_INDEX_HEADER: &str = "X-Nomad-Index";
 
 /// Nomad API Client
 #[derive(Clone, Debug)]
@@ -230,7 +232,26 @@ struct NodeDrainRequest<'a, 'b> {
 // These are the same
 type NodeDrainResponse = NodeEligibilityResponse;
 
+/// Nomad Responses that support blocking requests
+///
+/// See the [documentation](https://www.nomadproject.io/api/index.html#blocking-queries) for more
+/// details
+#[derive(Eq, PartialEq, Clone, Debug)]
+pub struct BlockingResponse<T> {
+    /// The index indicating the "change ID" for the current response
+    pub index: u64,
+    /// The actual data of the response
+    pub data: T,
+}
+
 impl Client {
+    /// Create a new Nomad Client
+    ///
+    /// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
+    /// CA certificate or require client authentication.
+    /// The default client has a timeout set to 6 minutes to allow supporting Nomad's
+    /// [blocking queries](https://www.nomadproject.io/api/index.html#blocking-queries). If you
+    /// use your own client, make sure to set this as well.
     #[allow(clippy::new_ret_no_self)]
     pub fn new<S1, S2>(
         address: S1,
@@ -243,7 +264,9 @@ impl Client {
     {
         let client = match client {
             Some(client) => client,
-            None => ClientBuilder::new().build()?,
+            None => ClientBuilder::new()
+                .timeout(Some(Duration::from_secs(360)))
+                .build()?,
         };
 
         Ok(Self {
@@ -270,34 +293,61 @@ impl Client {
 
     /// Get Information about a specific Node ID
     ///
-    /// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
-    /// CA certificate or require client authentication
-    pub fn node_details(&self, node_id: &str) -> Result<Node, crate::Error> {
-        let request = self.build_node_details_request(node_id)?;
-        let details: Node = self.client.execute(request)?.json()?;
-        Ok(details)
+    /// Supply the optional parameters to take advantage of
+    /// [blocking queries](https://www.nomadproject.io/api/index.html#blocking-queries)
+    pub fn node_details(
+        &self,
+        node_id: &str,
+        wait_index: Option<u64>,
+        wait_timeout: Option<Duration>,
+    ) -> Result<BlockingResponse<Node>, crate::Error> {
+        let request = self.build_node_details_request(node_id, wait_index, wait_timeout)?;
+        let mut response = self.client.execute(request)?;
+        let details = response.json()?;
+        Self::make_indexed_response(response, details)
     }
 
     /// Build requests to get node details
-    fn build_node_details_request(&self, node_id: &str) -> Result<reqwest::Request, crate::Error> {
+    fn build_node_details_request(
+        &self,
+        node_id: &str,
+        wait_index: Option<u64>,
+        wait_timeout: Option<Duration>,
+    ) -> Result<reqwest::Request, crate::Error> {
         let address = format!("{}/v1/node/{}", &self.address, node_id);
         let request = self.client.get(&address);
         let request = self.add_nomad_token_header(request);
+        let request = Self::add_blocking_requests(request, wait_index, wait_timeout);
         Ok(request.build()?)
     }
 
     /// Return a list of nodes
-    fn nodes(&self) -> Result<Vec<NodesInList>, crate::Error> {
-        let request = self.build_nodes_request()?;
-        let details = self.client.execute(request)?.json()?;
-        Ok(details)
+    ///
+    /// Supply the optional parameters to take advantage of
+    /// [blocking queries](https://www.nomadproject.io/api/index.html#blocking-queries)
+    fn nodes(
+        &self,
+        wait_index: Option<u64>,
+        wait_timeout: Option<Duration>,
+    ) -> Result<BlockingResponse<Vec<NodesInList>>, crate::Error> {
+        let request = self.build_nodes_request(wait_index, wait_timeout)?;
+        let mut response = self.client.execute(request)?;
+
+        let nodes = response.json()?;
+
+        Self::make_indexed_response(response, nodes)
     }
 
     /// Build request to retrieve list of nodes
-    fn build_nodes_request(&self) -> Result<reqwest::Request, crate::Error> {
+    fn build_nodes_request(
+        &self,
+        wait_index: Option<u64>,
+        wait_timeout: Option<Duration>,
+    ) -> Result<reqwest::Request, crate::Error> {
         let address = format!("{}/v1/nodes", &self.address);
         let request = self.client.get(&address);
         let request = self.add_nomad_token_header(request);
+        let request = Self::add_blocking_requests(request, wait_index, wait_timeout);
         Ok(request.build()?)
     }
 
@@ -305,14 +355,22 @@ impl Client {
     ///
     /// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
     /// CA certificate or require client authentication
-    pub fn find_node_by_instance_id(&self, instance_id: &str) -> Result<Node, crate::Error> {
-        let nodes = self.nodes()?;
+    pub fn find_node_by_instance_id(
+        &self,
+        instance_id: &str,
+    ) -> Result<BlockingResponse<Node>, crate::Error> {
+        let nodes = self.nodes(None, None)?;
         let result = nodes
+            .data
             .into_iter()
             .filter(|node| node.status == "ready")
-            .map(|node| self.node_details(&node.id))
+            .map(|node| self.node_details(&node.id, None, None))
             .find(|details| match details {
-                Ok(details) => match details.attributes.get("unique.platform.aws.instance-id") {
+                Ok(details) => match details
+                    .data
+                    .attributes
+                    .get("unique.platform.aws.instance-id")
+                {
                     Some(id) => id == instance_id,
                     None => false,
                 },
@@ -395,6 +453,37 @@ impl Client {
             None => request_builder,
         }
     }
+
+    fn add_blocking_requests(
+        request_builder: RequestBuilder,
+        wait_index: Option<u64>,
+        wait_timeout: Option<Duration>,
+    ) -> RequestBuilder {
+        match wait_index {
+            Some(index) => {
+                let request_builder = request_builder.query(&[("index", index.to_string())]);
+                match wait_timeout {
+                    None => request_builder,
+                    Some(timeout) => {
+                        request_builder.query(&[("wait", timeout.as_secs().to_string())])
+                    }
+                }
+            }
+            None => request_builder,
+        }
+    }
+
+    fn make_indexed_response<T>(
+        response: reqwest::Response,
+        data: T,
+    ) -> Result<BlockingResponse<T>, crate::Error> {
+        let index = match response.headers().get(NOMAD_INDEX_HEADER) {
+            None => 0,
+            Some(index) => index.to_str()?.parse()?,
+        };
+
+        Ok(BlockingResponse { data, index })
+    }
 }
 
 #[cfg(test)]
@@ -430,10 +519,14 @@ mod tests {
     #[test]
     fn build_node_details_request_is_built_properly() -> Result<(), crate::Error> {
         let client = nomad_client();
-        let request = client.build_node_details_request("id")?;
+        let request = client.build_node_details_request(
+            "id",
+            Some(1234),
+            Some(Duration::from_secs(300)),
+        )?;
 
         assert_eq!(
-            format!("{}/v1/node/{}", NOMAD_ADDRESS, "id"),
+            format!("{}/v1/node/{}?index={}&wait={}", NOMAD_ADDRESS, "id", "1234", "300"),
             request.url().to_string()
         );
         assert_eq!(&reqwest::Method::GET, request.method());
