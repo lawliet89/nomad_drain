@@ -2,12 +2,21 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use reqwest::{Client, ClientBuilder};
+use reqwest::{Client as HttpClient, ClientBuilder};
 use serde::{Deserialize, Serialize};
+
+/// Vault API Client
+#[derive(Clone, Debug)]
+pub struct Client {
+    token: String,
+    address: String,
+    client: HttpClient,
+}
 
 /// Generic Vault Response
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum Response {
     /// An error response
     Error {
@@ -15,29 +24,33 @@ pub enum Response {
         errors: Vec<String>,
     },
     /// A successful response
-    Response {
-        /// Request UUID
-        request_id: String,
-        /// Lease ID for secrets
-        lease_id: String,
-        /// Renewable for secrets
-        renewable: bool,
-        /// Lease duration for secrets
-        lease_duration: u64,
-        /// Warnings, if any
-        #[serde(default)]
-        warnings: Option<Vec<String>>,
+    Response(ResponseData),
+}
 
-        /// Auth data for authentication requests
-        #[serde(default)]
-        auth: Option<Authentication>,
+/// Vault General Response Data
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ResponseData {
+    /// Request UUID
+    request_id: String,
+    /// Lease ID for secrets
+    lease_id: String,
+    /// Renewable for secrets
+    renewable: bool,
+    /// Lease duration for secrets
+    lease_duration: u64,
+    /// Warnings, if any
+    #[serde(default)]
+    warnings: Option<Vec<String>>,
 
-        /// Data for secrets requests
-        #[serde(default)]
-        data: Option<HashMap<String, String>>,
-        // Missing and ignored fields:
-        // - wrap_info
-    },
+    /// Auth data for authentication requests
+    #[serde(default)]
+    auth: Option<Authentication>,
+
+    /// Data for secrets requests
+    #[serde(default)]
+    data: Option<HashMap<String, String>>,
+    // Missing and ignored fields:
+    // - wrap_info
 }
 
 /// Authentication data from Vault
@@ -82,110 +95,155 @@ pub struct AwsIamLoginPayload<'a, 'b> {
     pub aws_payload: Cow<'b, crate::aws::VaultAwsAuthIamPayload>,
 }
 
-/// Login with AWS IAM authentication method. Returns a Vault token on success
-///
-/// - `address`: Address of Vault Server. Include the scheme (e.g. `https`) and the host with an
-///    optional port
-/// - `path`: Path to the AWS authentication engine. Usually just `aws`.
-/// - `role`: Name fo the AWS authentication role
-/// - `payload`: Authentication payload from calling `aws::VaultAwsAuthIamPayload::new`
-///
-/// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
-/// CA certificate or require client authentication
-pub fn login_aws_iam(
-    vault_address: &str,
-    aws_auth_path: &str,
-    aws_auth_role: &str,
-    aws_payload: &crate::aws::VaultAwsAuthIamPayload,
-    client: Option<&Client>,
-) -> Result<String, crate::Error> {
-    let client = match client {
-        Some(client) => Cow::Borrowed(client),
-        None => Cow::Owned(ClientBuilder::new().build()?),
-    };
+impl Client {
+    /// Create a new API client from an existing Token
+    ///
+    /// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
+    /// CA certificate or require client authentication
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new<S1, S2>(
+        vault_address: S1,
+        vault_token: S2,
+        client: Option<HttpClient>,
+    ) -> Result<Self, crate::Error>
+    where
+        S1: AsRef<str>,
+        S2: AsRef<str>,
+    {
+        let client = match client {
+            Some(client) => client,
+            None => ClientBuilder::new().build()?,
+        };
 
-    let request = build_login_aws_iam_request(
-        vault_address,
-        aws_auth_path,
-        aws_auth_role,
-        aws_payload,
-        &client,
-    )?;
-    let response: Response = client.execute(request)?.json()?;
-    match response {
-        Response::Error { errors } => Err(crate::Error::InvalidVaultResponse(errors.join("; ")))?,
-        Response::Response {
-            auth: Some(auth), ..
-        } => Ok(auth.client_token),
-        _ => Err(crate::Error::InvalidVaultResponse(
-            "Missing authentication data".to_string(),
-        ))?,
+        Ok(Self {
+            address: vault_address.as_ref().to_string(),
+            token: vault_token.as_ref().to_string(),
+            client,
+        })
     }
-}
 
-fn build_login_aws_iam_request(
-    vault_address: &str,
-    aws_auth_path: &str,
-    aws_auth_role: &str,
-    aws_payload: &crate::aws::VaultAwsAuthIamPayload,
-    client: &Client,
-) -> Result<reqwest::Request, crate::Error> {
-    let vault_address = url::Url::parse(vault_address)?;
-    let vault_address = vault_address.join(&format!("/v1/auth/{}/login", aws_auth_path))?;
-    let payload = AwsIamLoginPayload {
-        role: aws_auth_role,
-        aws_payload: Cow::Borrowed(aws_payload),
-    };
-    Ok(client.post(vault_address).json(&payload).build()?)
-}
-
-/// Get a token from Nomad Secrets Engine
-///
-/// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
-/// CA certificate or require client authentication
-pub fn get_nomad_token(
-    vault_address: &str,
-    nomad_path: &str,
-    nomad_role: &str,
-    vault_token: &str,
-    client: Option<&Client>,
-) -> Result<String, crate::Error> {
-    let client = match client {
-        Some(client) => Cow::Borrowed(client),
-        None => Cow::Owned(ClientBuilder::new().build()?),
-    };
-
-    let request =
-        build_nomad_token_request(vault_address, nomad_path, nomad_role, vault_token, &client)?;
-    let response: Response = client.execute(request)?.json()?;
-    match response {
-        Response::Error { errors } => Err(crate::Error::InvalidVaultResponse(errors.join("; ")))?,
-        Response::Response {
-            data: Some(mut data),
-            ..
-        } => data.remove("secret_id").ok_or_else(|| {
-            crate::Error::InvalidVaultResponse("Missing Nomad token from response".to_string())
-        }),
-        _ => Err(crate::Error::InvalidVaultResponse(
-            "Missing secrets data".to_string(),
-        ))?,
+    /// Returns the Vault Token
+    pub fn token(&self) -> &str {
+        &self.token
     }
-}
 
-fn build_nomad_token_request(
-    vault_address: &str,
-    nomad_path: &str,
-    nomad_role: &str,
-    vault_token: &str,
-    client: &Client,
-) -> Result<reqwest::Request, crate::Error> {
-    let vault_address = url::Url::parse(vault_address)?;
-    let vault_address = vault_address.join(&format!("/v1/{}/creds/{}", nomad_path, nomad_role))?;
+    /// Returns the Vault address
+    pub fn address(&self) -> &str {
+        &self.address
+    }
 
-    Ok(client
-        .get(vault_address)
-        .header("X-Vault-Token", vault_token)
-        .build()?)
+    /// Returns the HTTP Client
+    pub fn http_client(&self) -> &HttpClient {
+        &self.client
+    }
+
+    /// Login with AWS IAM authentication method. Returns a Vault token on success
+    ///
+    /// - `address`: Address of Vault Server. Include the scheme (e.g. `https`) and the host with an
+    ///    optional port
+    /// - `path`: Path to the AWS authentication engine. Usually just `aws`.
+    /// - `role`: Name fo the AWS authentication role
+    /// - `payload`: Authentication payload from calling `aws::VaultAwsAuthIamPayload::new`
+    ///
+    /// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
+    /// CA certificate or require client authentication
+    pub fn login_aws_iam(
+        vault_address: &str,
+        aws_auth_path: &str,
+        aws_auth_role: &str,
+        aws_payload: &crate::aws::VaultAwsAuthIamPayload,
+        client: Option<HttpClient>,
+    ) -> Result<Self, crate::Error> {
+        let client = match client {
+            Some(client) => client,
+            None => ClientBuilder::new().build()?,
+        };
+
+        let request = Self::build_login_aws_iam_request(
+            vault_address,
+            aws_auth_path,
+            aws_auth_role,
+            aws_payload,
+            &client,
+        )?;
+        let response: Response = client.execute(request)?.json()?;
+        let token = match response {
+            Response::Error { errors } => {
+                Err(crate::Error::InvalidVaultResponse(errors.join("; ")))?
+            }
+            Response::Response(ResponseData {
+                auth: Some(auth), ..
+            }) => Ok(auth.client_token),
+            _ => Err(crate::Error::InvalidVaultResponse(
+                "Missing authentication data".to_string(),
+            )),
+        }?;
+
+        Ok(Self {
+            address: vault_address.to_string(),
+            token,
+            client,
+        })
+    }
+
+    fn build_login_aws_iam_request(
+        vault_address: &str,
+        aws_auth_path: &str,
+        aws_auth_role: &str,
+        aws_payload: &crate::aws::VaultAwsAuthIamPayload,
+        client: &HttpClient,
+    ) -> Result<reqwest::Request, crate::Error> {
+        let vault_address = url::Url::parse(vault_address)?;
+        let vault_address = vault_address.join(&format!("/v1/auth/{}/login", aws_auth_path))?;
+        let payload = AwsIamLoginPayload {
+            role: aws_auth_role,
+            aws_payload: Cow::Borrowed(aws_payload),
+        };
+        Ok(client.post(vault_address).json(&payload).build()?)
+    }
+
+    /// Get a token from Nomad Secrets Engine
+    ///
+    /// You can optionally provide a `reqwest::Client` if you have specific needs like custom root
+    /// CA certificate or require client authentication
+    pub fn get_nomad_token(
+        &self,
+        nomad_path: &str,
+        nomad_role: &str,
+    ) -> Result<String, crate::Error> {
+        let request = self.build_nomad_token_request(nomad_path, nomad_role)?;
+        let response: Response = self.client.execute(request)?.json()?;
+        match response {
+            Response::Error { errors } => {
+                Err(crate::Error::InvalidVaultResponse(errors.join("; ")))?
+            }
+            Response::Response(ResponseData {
+                data: Some(mut data),
+                ..
+            }) => data.remove("secret_id").ok_or_else(|| {
+                crate::Error::InvalidVaultResponse("Missing Nomad token from response".to_string())
+            }),
+            _ => Err(crate::Error::InvalidVaultResponse(
+                "Missing secrets data".to_string(),
+            ))?,
+        }
+    }
+
+    fn build_nomad_token_request(
+        &self,
+        nomad_path: &str,
+        nomad_role: &str,
+    ) -> Result<reqwest::Request, crate::Error> {
+        let vault_address = url::Url::parse(self.address())?;
+        let vault_address =
+            vault_address.join(&format!("/v1/{}/creds/{}", nomad_path, nomad_role))?;
+
+        Ok(self
+            .client
+            .get(vault_address)
+            .header("X-Vault-Token", self.token.as_str())
+            .build()?)
+    }
 }
 
 #[cfg(test)]
@@ -202,7 +260,7 @@ pub(crate) mod tests {
     fn login_aws_iam_request_is_built_properly() -> Result<(), crate::Error> {
         let address = vault_address();
         let aws_payload = crate::aws::tests::vault_aws_iam_payload(None)?;
-        let request = build_login_aws_iam_request(
+        let request = Client::build_login_aws_iam_request(
             &address,
             "aws",
             "default",
@@ -228,8 +286,8 @@ pub(crate) mod tests {
         let address = vault_address();
         let aws_payload = crate::aws::tests::vault_aws_iam_payload(Some("vault.example.com"))?;
 
-        let token = login_aws_iam(&address, "aws", "default", &aws_payload, None)?;
-        assert!(token.len() > 0);
+        let client = Client::login_aws_iam(&address, "aws", "default", &aws_payload, None)?;
+        assert!(!client.token().is_empty());
         Ok(())
     }
 
@@ -251,7 +309,7 @@ pub(crate) mod tests {
 }
 "#;
         let data = match serde_json::from_str::<Response>(json).unwrap() {
-            Response::Response { data, .. } => data,
+            Response::Response(ResponseData{ data, .. }) => data,
             _ => panic!("Invalid deserialization"),
         };
         let nomad = data.unwrap();
@@ -260,18 +318,11 @@ pub(crate) mod tests {
 
     #[test]
     fn nomad_token_request_is_built_properly() -> Result<(), crate::Error> {
-        let address = vault_address();
-        let token = "vault_token";
-        let request = build_nomad_token_request(
-            &address,
-            "nomad",
-            "default",
-            token,
-            &ClientBuilder::new().build()?,
-        )?;
+        let client = Client::new(vault_address(), "vault_token", None)?;
+        let request = client.build_nomad_token_request("nomad", "default")?;
 
         assert_eq!(
-            format!("{}/v1/nomad/creds/default", address),
+            format!("{}/v1/nomad/creds/default", vault_address()),
             request.url().to_string()
         );
         assert_eq!(&reqwest::Method::GET, request.method());

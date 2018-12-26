@@ -231,6 +231,7 @@ struct NodeDrainRequest<'a, 'b> {
 type NodeDrainResponse = NodeEligibilityResponse;
 
 impl Client {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new<S1, S2>(
         address: S1,
         token: Option<S2>,
@@ -250,6 +251,21 @@ impl Client {
             address: address.as_ref().to_string(),
             token: token.map(|s| s.as_ref().to_string()),
         })
+    }
+
+    /// Returns the Nomad Server Address
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+
+    /// Reurns the Nomad Token, if any
+    pub fn token(&self) -> Option<&str> {
+        self.token.as_ref().map(|s| s.as_str())
+    }
+
+    /// Returns the HTTP Client used
+    pub fn http_client(&self) -> &HttpClient {
+        &self.client
     }
 
     /// Get Information about a specific Node ID

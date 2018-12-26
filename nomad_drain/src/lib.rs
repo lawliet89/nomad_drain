@@ -1,3 +1,5 @@
+#![deny(clippy::all)]
+
 mod error;
 
 pub mod aws;
@@ -25,10 +27,10 @@ pub fn login_to_vault(
     aws_credentials: &AwsCredentials,
     header_value: Option<&str>,
     region: Option<Region>,
-) -> Result<String, Error> {
+) -> Result<vault::Client, Error> {
     let aws_payload = aws::VaultAwsAuthIamPayload::new(aws_credentials, header_value, region);
 
-    vault::login_aws_iam(
+    vault::Client::login_aws_iam(
         &vault_address,
         vault_auth_path,
         vault_auth_role,
@@ -76,7 +78,7 @@ mod tests {
         );
         let credentials = credentials.credentials().wait()?;
 
-        let vault_token = login_to_vault(
+        let client = login_to_vault(
             &crate::vault::tests::vault_address(),
             "aws",
             "default",
@@ -84,7 +86,7 @@ mod tests {
             Some("vault.example.com"),
             None,
         )?;
-        assert!(vault_token.len() > 0);
+        assert!(!client.token().is_empty());
 
         Ok(())
     }

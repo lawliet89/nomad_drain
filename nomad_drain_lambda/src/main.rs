@@ -15,6 +15,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn lambda_handler(_event: Event, _context: Context) -> Result<HandlerResult, HandlerError> {
     Ok(HandlerResult {
         message: "Hello world".to_string(),
