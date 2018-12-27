@@ -4,6 +4,8 @@ use std::borrow::Cow;
 
 use aws_lambda_events::event::autoscaling::AutoScalingEvent as Event;
 use lambda_runtime::{error::HandlerError, lambda, Context};
+use log::info;
+use rusoto_autoscaling::{Autoscaling, AutoscalingClient, CompleteLifecycleActionType};
 use serde::{Deserialize, Serialize};
 
 use nomad_drain::nomad::Client as NomadClient;
@@ -42,9 +44,31 @@ struct VaultConfig {
     nomad_role: Option<String>,
 }
 
+#[derive(Deserialize, Debug, Clone, Eq, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+struct AsgEventDetails {
+    pub lifecycle_action_token: String,
+    pub account_id: String,
+    pub auto_scaling_group_name: String,
+    #[serde(rename = "EC2InstanceId")]
+    pub instance_id: String,
+    pub lifecycle_transition: AsgLifecycleTransition,
+    pub lifecycle_hook_name: String,
+}
+
+#[derive(Deserialize, Debug, Clone, Eq, PartialEq)]
+enum AsgLifecycleTransition {
+    #[serde(rename = "autoscaling:EC2_INSTANCE_LAUNCHING")]
+    InstanceLaunching,
+    #[serde(rename = "autoscaling:EC2_INSTANCE_TERMINATING")]
+    InstanceTerminating,
+}
+
 #[derive(Serialize)]
 struct HandlerResult {
-    pub message: String,
+    pub instance_id: String,
+    pub node_id: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 impl Config {
@@ -146,12 +170,47 @@ fn lambda_wrapper(event: Event, context: Context) -> Result<HandlerResult, Handl
     }
 }
 
-fn lambda_handler(event: &Event, context: &Context) -> Result<HandlerResult, Error> {
+fn lambda_handler(event: &Event, _context: &Context) -> Result<HandlerResult, Error> {
     let config = Config::from_environment()?;
     let nomad_client = config.new_nomad_client()?;
 
+    let lifecycle_hook: AsgEventDetails =
+        serde_json::from_value(serde_json::to_value(&event.detail)?)?;
+
+    if lifecycle_hook.lifecycle_transition != AsgLifecycleTransition::InstanceTerminating {
+        Err(Error::UnexpectedLifecycleTransition)?;
+    }
+
+    info!(
+        "Instance ID {} is being terminated",
+        lifecycle_hook.instance_id
+    );
+
+    let node = nomad_client.find_node_by_instance_id(&lifecycle_hook.instance_id)?;
+    info!("Draining Nomad Node ID {}", node.data.id);
+
+    nomad_client.set_node_drain(&node.data.id, true, None)?;
+
+    info!("Node ID {} Drained", node.data.id);
+
+    // Complete the lifecycle action
+    let asg_client = AutoscalingClient::new(Default::default());
+    let _ = asg_client
+        .complete_lifecycle_action(CompleteLifecycleActionType {
+            auto_scaling_group_name: lifecycle_hook.auto_scaling_group_name.to_string(),
+            instance_id: Some(lifecycle_hook.instance_id.to_string()),
+            lifecycle_action_result: "CONTINUE".to_string(),
+            lifecycle_action_token: Some(lifecycle_hook.lifecycle_action_token.to_string()),
+            lifecycle_hook_name: lifecycle_hook.lifecycle_hook_name.to_string(),
+        })
+        .sync()?;
+
+    info!("Lifecycle action complete");
+
     Ok(HandlerResult {
-        message: "Hello world".to_string(),
+        instance_id: lifecycle_hook.instance_id.to_string(),
+        node_id: node.data.id.to_string(),
+        timestamp: chrono::Utc::now(),
     })
 }
 
