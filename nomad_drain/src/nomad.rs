@@ -316,7 +316,7 @@ impl Client {
         let request = self.build_node_details_request(node_id, wait_index, wait_timeout)?;
         let mut response = self.client.execute(request)?;
         let details = response.json()?;
-        Self::make_indexed_response(response, details)
+        Self::make_indexed_response(&response, details)
     }
 
     /// Build requests to get node details
@@ -347,7 +347,7 @@ impl Client {
 
         let nodes = response.json()?;
 
-        Self::make_indexed_response(response, nodes)
+        Self::make_indexed_response(&response, nodes)
     }
 
     /// Build request to retrieve list of nodes
@@ -546,7 +546,7 @@ impl Client {
     }
 
     fn make_indexed_response<T>(
-        response: reqwest::Response,
+        response: &reqwest::Response,
         data: T,
     ) -> Result<BlockingResponse<T>, crate::Error> {
         let index = match response.headers().get(NOMAD_INDEX_HEADER) {
