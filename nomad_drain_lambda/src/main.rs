@@ -213,5 +213,3 @@ fn lambda_handler(event: &Event, _context: &Context) -> Result<HandlerResult, Er
         timestamp: chrono::Utc::now(),
     })
 }
-
-// Environment deserialize https://github.com/softprops/envy
