@@ -24,6 +24,23 @@ resource "aws_iam_role" "lambda" {
   assume_role_policy = "${data.aws_iam_policy_document.lambda_assume_role.json}"
 }
 
+resource "aws_iam_role_policy" "asg_lifecycle" {
+  role   = "${aws_iam_role.lambda.id}"
+  policy = "${data.aws_iam_policy_document.asg_lifecycle.json}"
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_logging" {
+  role       = "${aws_iam_role.lambda.id}"
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# See https://forums.aws.amazon.com/message.jspa?messageID=756727
+# and https://docs.aws.amazon.com/lambda/latest/dg/vpc.html
+resource "aws_iam_role_policy_attachment" "lambda_eni" {
+  role       = "${aws_iam_role.lambda.id}"
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaENIManagementAccess"
+}
+
 resource "aws_security_group" "lambda" {
   name                   = "${var.lambda_name}"
   description            = "Security group for the ${var.lambda_name} lambda function"
@@ -56,6 +73,11 @@ resource "aws_security_group_rule" "vault" {
 }
 
 resource "aws_lambda_function" "drain" {
+  depends_on = [
+    "aws_iam_role_policy_attachment.lambda_logging",
+    "aws_iam_role_policy_attachment.lambda_eni",
+  ]
+
   filename         = "${local.lambda_payload_path}"
   source_code_hash = "${base64sha256(file("${local.lambda_payload_path}"))}"
 
@@ -68,19 +90,21 @@ resource "aws_lambda_function" "drain" {
   timeout = "${var.lambda_timeout}"
 
   vpc_config {
-    subnet_ids         = "${var.vpc_subnets}"
+    subnet_ids         = ["${var.vpc_subnets}"]
     security_group_ids = ["${aws_security_group.lambda.id}"]
   }
 
-  variables {
-    NOMAD_ADDR        = "${var.nomad_address}"
-    USE_NOMAD_TOKEN   = "true"
-    VAULT_ADDR        = "${var.vault_address}"
-    AUTH_PATH         = "${var.auth_path}"
-    AUTH_ROLE         = "${vault_aws_auth_backend_role.lambda.role}"
-    AUTH_HEADER_VALUE = "${var.aws_auth_header_value}"
-    NOMAD_PATH        = "${var.nomad_path}"
-    NOMAD_ROLE        = "${var.nomad_role}"
+  environment {
+    variables {
+      NOMAD_ADDR        = "${var.nomad_address}"
+      USE_NOMAD_TOKEN   = "true"
+      VAULT_ADDR        = "${var.vault_address}"
+      AUTH_PATH         = "${var.auth_path}"
+      AUTH_ROLE         = "${vault_aws_auth_backend_role.lambda.role}"
+      AUTH_HEADER_VALUE = "${var.aws_auth_header_value}"
+      NOMAD_PATH        = "${var.nomad_path}"
+      NOMAD_ROLE        = "${var.nomad_role}"
+    }
   }
 
   tags = "${var.tags}"
@@ -126,9 +150,4 @@ data "aws_iam_policy_document" "asg_lifecycle" {
       "${data.aws_autoscaling_group.asg.arn}",
     ]
   }
-}
-
-resource "aws_iam_role_policy" "asg_lifecycle" {
-  role   = "${aws_iam_role.lambda.id}"
-  policy = "${data.aws_iam_policy_document.asg_lifecycle.json}"
 }

@@ -29,7 +29,7 @@ variable "vault_address" {
 
 variable "nomad_acl_policy_name" {
   description = "Name of the Nomad ACL policy to allow the Lambda to drain nodes"
-  default     = "nomad_drain_lambda"
+  default     = "LambdaDrain"
 }
 
 variable "auth_path" {

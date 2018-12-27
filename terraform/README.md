@@ -12,7 +12,7 @@
 | lambda_name | Name of the Nomad Drain Lambda | string | `nomad_node_drain` | no |
 | lambda_timeout | Lambda Timeout in seconds. Maximum is 900 | string | `900` | no |
 | lifecycle_hook_name | Name of the lifecycle hook | string | `nomad_client_drain` | no |
-| nomad_acl_policy_name | Name of the Nomad ACL policy to allow the Lambda to drain nodes | string | `nomad_drain_lambda` | no |
+| nomad_acl_policy_name | Name of the Nomad ACL policy to allow the Lambda to drain nodes | string | `LambdaDrain` | no |
 | nomad_address | Address to Nomad Server API | string | - | yes |
 | nomad_api_port | Port for the Nomad API | string | `4646` | no |
 | nomad_path | Path to the Vault's Nomad secrets engine | string | `nomad` | no |

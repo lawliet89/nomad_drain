@@ -12,7 +12,7 @@ resource "vault_generic_secret" "nomad_lambda_role" {
 }
 
 data "template_file" "vault_policy" {
-  template = "${file("${path.module}/vault/policy.hck")}"
+  template = "${file("${path.module}/vault/policy.hcl")}"
 
   vars {
     nomad_path = "${var.nomad_path}"
