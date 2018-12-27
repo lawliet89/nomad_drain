@@ -189,7 +189,15 @@ fn lambda_handler(event: &Event, _context: &Context) -> Result<HandlerResult, Er
     let node = nomad_client.find_node_by_instance_id(&lifecycle_hook.instance_id)?;
     info!("Draining Nomad Node ID {}", node.data.id);
 
-    nomad_client.set_node_drain(&node.data.id, true, None)?;
+    // Lambda has a max runtime of 900s. Let's set a deadline for 600s
+    nomad_client.set_node_drain(
+        &node.data.id,
+        true,
+        Some(nomad_drain::nomad::DrainSpec {
+            deadline: 600,
+            ignore_system_jobs: false,
+        }),
+    )?;
 
     info!("Node ID {} Drained", node.data.id);
 

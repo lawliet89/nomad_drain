@@ -65,7 +65,9 @@ impl VaultAwsAuthIamPayload {
         request.set_content_type("application/x-www-form-urlencoded".to_owned());
 
         if let Some(value) = header_value {
-            request.add_header(IAM_SERVER_ID_HEADER, value);
+            if value.len() > 0 {
+                request.add_header(IAM_SERVER_ID_HEADER, value);
+            }
         }
 
         request.sign_with_plus(credentials, true);
