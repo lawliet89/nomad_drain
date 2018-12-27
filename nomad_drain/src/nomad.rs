@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use log::{info, warn};
 use reqwest::{Client as HttpClient, ClientBuilder, RequestBuilder};
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +26,7 @@ pub struct NodesInList {
     #[serde(rename = "ID")]
     pub id: String,
     pub name: String,
-    pub status: String,
+    pub status: NodeStatus,
     pub node_class: String,
     pub scheduling_eligibility: NodeEligibility,
     pub version: String,
@@ -80,7 +81,7 @@ pub struct Node {
     #[serde(rename = "SecretID")]
     pub secret_id: String,
     /// Status
-    pub status: String,
+    pub status: NodeStatus,
     /// Status Description
     pub status_description: String,
     /// Time status was updated
@@ -92,6 +93,17 @@ pub struct Node {
     // /// Events Information
     // #[serde(default)]
     // pub events: Vec<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeStatus {
+    /// Node is initialising
+    Initializing,
+    /// Node is ready and accepting allocations
+    Ready,
+    /// Node is down or missed a heartbeat
+    Down,
 }
 
 /// Node Driver Information
@@ -363,7 +375,7 @@ impl Client {
         let result = nodes
             .data
             .into_iter()
-            .filter(|node| node.status == "ready")
+            .filter(|node| node.status == NodeStatus::Ready)
             .map(|node| self.node_details(&node.id, None, None))
             .find(|details| match details {
                 Ok(details) => match details
@@ -423,6 +435,7 @@ impl Client {
     pub fn set_node_drain(
         &self,
         node_id: &str,
+        monitor: bool,
         drain_spec: Option<DrainSpec>,
     ) -> Result<(), crate::Error> {
         let drain_spec = drain_spec.unwrap_or_default();
@@ -433,7 +446,12 @@ impl Client {
         let request = self.build_drain_request(node_id, &payload)?;
         // Request is successful if the response can be deserialized
         let _: NodeDrainResponse = self.client.execute(request)?.json()?;
-        Ok(())
+
+        if monitor {
+            self.monitor_node_drain(node_id, None)
+        } else {
+            Ok(())
+        }
     }
 
     fn build_drain_request(
@@ -445,6 +463,60 @@ impl Client {
         let request = self.client.post(&address).json(payload);
         let request = self.add_nomad_token_header(request);
         Ok(request.build()?)
+    }
+
+    /// Monitor Node Drain
+    ///
+    /// This function will block until the drain is complete, or an error occurs
+    pub fn monitor_node_drain(
+        &self,
+        node_id: &str,
+        wait_timeout: Option<Duration>,
+    ) -> Result<(), crate::Error> {
+        // The procedure is based on https://github.com/hashicorp/nomad/blob/master/api/nodes.go
+        // TODOs:
+        // - Monitor that no allocations are running
+        // - Async everything!
+
+        let wait_timeout = match wait_timeout {
+            Some(duration) => duration,
+            None => Duration::from_secs(300),
+        };
+        let mut wait_index = None;
+        let mut node;
+        let mut strategy = None;
+        let mut strategy_changed = false;
+
+        loop {
+            node = self.node_details(node_id, wait_index, Some(wait_timeout))?;
+
+            if node.data.drain_strategy.is_none() {
+                if strategy_changed {
+                    info!(
+                        "Node {} has has marked all allocations for migration",
+                        node_id
+                    );
+                } else {
+                    info!("No drain strategy set for node {}", node_id);
+                }
+                return Ok(());
+            }
+
+            if node.data.status == NodeStatus::Down {
+                warn!("Node {} down", node_id);
+            }
+
+            if strategy != node.data.drain_strategy {
+                info!(
+                    "Node {} drain updated: {:?}",
+                    node_id, node.data.drain_strategy
+                );
+            }
+
+            strategy = node.data.drain_strategy;
+            strategy_changed = true;
+            wait_index = Some(node.index);
+        }
     }
 
     fn add_nomad_token_header(&self, request_builder: RequestBuilder) -> RequestBuilder {
@@ -519,14 +591,14 @@ mod tests {
     #[test]
     fn build_node_details_request_is_built_properly() -> Result<(), crate::Error> {
         let client = nomad_client();
-        let request = client.build_node_details_request(
-            "id",
-            Some(1234),
-            Some(Duration::from_secs(300)),
-        )?;
+        let request =
+            client.build_node_details_request("id", Some(1234), Some(Duration::from_secs(300)))?;
 
         assert_eq!(
-            format!("{}/v1/node/{}?index={}&wait={}", NOMAD_ADDRESS, "id", "1234", "300"),
+            format!(
+                "{}/v1/node/{}?index={}&wait={}",
+                NOMAD_ADDRESS, "id", "1234", "300"
+            ),
             request.url().to_string()
         );
         assert_eq!(&reqwest::Method::GET, request.method());
