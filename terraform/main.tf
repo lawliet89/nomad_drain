@@ -1,6 +1,6 @@
 # Reference: https://docs.aws.amazon.com/autoscaling/ec2/userguide/lifecycle-hooks.html
 locals {
-  lambda_payload_path = "${path.module}/payload/lambda.zip"
+  lambda_payload_path = "${var.lambda_payload}"
 }
 
 data "aws_autoscaling_group" "asg" {

@@ -59,6 +59,11 @@ variable "lambda_description" {
   default     = "Automatically drain a Nomad node of allocations when the instance is terminating."
 }
 
+variable "lambda_payload" {
+  description = "Path to the Lambda payload. The payload must be zipped with the binary named `bootstrap`. It must be compiled for the target `x86_64-unknown-linux-musl`"
+}
+
+
 variable "lambda_timeout" {
   description = "Lambda Timeout in seconds. Maximum is 900"
   default     = 900
