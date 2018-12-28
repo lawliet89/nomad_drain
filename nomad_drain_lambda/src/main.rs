@@ -69,7 +69,7 @@ enum AsgLifecycleTransition {
     InstanceTerminating,
 }
 
-#[derive(Serialize)]
+ #[derive(Serialize, Debug, Clone, Eq, PartialEq)] 
 struct HandlerResult {
     pub instance_id: String,
     pub node_id: String,
