@@ -8,9 +8,50 @@ pub mod vault;
 
 pub use crate::error::Error;
 
+use std::fmt;
+use std::ops::Deref;
+
 use futures::future::Future;
 use rusoto_core::credential::AwsCredentials;
 use rusoto_core::{DefaultCredentialsProvider, ProvideAwsCredentials, Region};
+use serde::{Deserialize, Serialize};
+
+/// A wrapper around a String with custom implementation of Display and Debug to not leak
+/// secrets during logging.
+#[derive(Serialize, Deserialize, Clone, Eq, PartialEq)]
+pub struct Secret(pub String);
+
+impl Deref for Secret {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "***")
+    }
+}
+
+impl fmt::Display for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "***")
+    }
+}
+
+impl AsRef<str> for Secret {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for Secret {
+    fn from(s: String) -> Self {
+        Secret(s)
+    }
+}
 
 /// Use AWS credentials to obtain a token from Vault
 ///

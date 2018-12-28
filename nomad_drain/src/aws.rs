@@ -1,6 +1,8 @@
+use std::borrow::{Borrow, Cow};
 use std::collections::HashMap;
 
 use futures::future::Future;
+use log::{debug, info};
 use rusoto_core::credential::AwsCredentials;
 use rusoto_core::param::{Params, ServiceParams};
 use rusoto_core::signature::{SignedRequest, SignedRequestPayload};
@@ -38,15 +40,32 @@ pub struct VaultAwsAuthIamPayload {
 impl VaultAwsAuthIamPayload {
     /// Create a payload for use with Vault AWS Authentication using the IAM method
     ///
+    /// If you do not provide a `region`, we will use a the "global" AWS STS endpoint.
+    ///
     /// If the Vault AWS Authentication method has the
     /// [`iam_server_id_header_value`](https://www.vaultproject.io/api/auth/aws/index.html#iam_server_id_header_value)
     /// configured, you *must* provide the configured value in the `header_value` parameter.
-    pub fn new(
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn new<S, R>(
         credentials: &AwsCredentials,
-        header_value: Option<&str>,
-        region: Option<Region>,
-    ) -> Self {
-        let region = region.unwrap_or_default();
+        header_value: Option<S>,
+        region: Option<R>,
+    ) -> Self
+    where
+        S: AsRef<str>,
+        R: Borrow<Region>,
+    {
+        info!("Building Login Payload for AWS authentication to Vault");
+        let region = region
+            .as_ref()
+            .map(|r| Cow::Borrowed(r.borrow()))
+            .unwrap_or_else(|| {
+                debug!("No region provided: using \"global\" us-east-1 endpoint.");
+                Cow::Owned(Region::Custom {
+                    name: "us-east-1".to_string(),
+                    endpoint: "sts.amazonaws.com".to_string(),
+                })
+            });
 
         // Code below is referenced from the code for
         // https://rusoto.github.io/rusoto/rusoto_sts/trait.Sts.html#tymethod.get_caller_identity
@@ -65,7 +84,9 @@ impl VaultAwsAuthIamPayload {
         request.set_content_type("application/x-www-form-urlencoded".to_owned());
 
         if let Some(value) = header_value {
-            request.add_header(IAM_SERVER_ID_HEADER, value);
+            if !value.as_ref().is_empty() {
+                request.add_header(IAM_SERVER_ID_HEADER, value.as_ref());
+            }
         }
 
         request.sign_with_plus(credentials, true);
@@ -96,12 +117,16 @@ impl VaultAwsAuthIamPayload {
             })
             .collect();
 
-        Self {
+        let result = Self {
             iam_http_request_method: "POST".to_string(),
             iam_request_url: base64::encode(&uri),
             iam_request_body: payload,
             iam_request_headers: headers,
-        }
+        };
+
+        debug!("AWS Payload: {:#?}", result);
+
+        result
     }
 }
 
@@ -115,29 +140,46 @@ pub(crate) mod tests {
         Ok(provider.credentials().wait()?)
     }
 
-    pub(crate) fn region() -> Region {
-        Region::UsEast1
-    }
-
     pub(crate) fn vault_aws_iam_payload(
         header_value: Option<&str>,
+        region: Option<Region>,
     ) -> Result<VaultAwsAuthIamPayload, crate::Error> {
         let cred = credentials()?;
-        Ok(VaultAwsAuthIamPayload::new(
-            &cred,
-            header_value,
-            Some(region()),
-        ))
+        Ok(VaultAwsAuthIamPayload::new(&cred, header_value, region))
     }
 
     #[test]
     fn vault_aws_iam_payload_has_expected_values() -> Result<(), crate::Error> {
-        let payload = vault_aws_iam_payload(Some("vault.example.com"))?;
+        let region = Region::UsEast1;
+        let payload = vault_aws_iam_payload(Some("vault.example.com"), Some(region.clone()))?;
 
         assert_eq!(payload.iam_http_request_method, "POST");
         assert_eq!(
             payload.iam_request_url,
-            base64::encode(&format!("https://sts.{}.amazonaws.com/", region().name()))
+            base64::encode(&format!("https://sts.{}.amazonaws.com/", region.name()))
+        );
+        assert_eq!(
+            payload.iam_request_body,
+            base64::encode("Action=GetCallerIdentity&Version=2011-06-15")
+        );
+        assert!(payload.iam_request_headers.contains_key("authorization"));
+        assert_eq!(
+            payload
+                .iam_request_headers
+                .get(&IAM_SERVER_ID_HEADER.to_lowercase()),
+            Some(&vec!["vault.example.com".to_string()])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn vault_aws_iam_payload_has_default_global_region() -> Result<(), crate::Error> {
+        let payload = vault_aws_iam_payload(Some("vault.example.com"), None)?;
+
+        assert_eq!(payload.iam_http_request_method, "POST");
+        assert_eq!(
+            payload.iam_request_url,
+            base64::encode("https://sts.amazonaws.com/")
         );
         assert_eq!(
             payload.iam_request_body,

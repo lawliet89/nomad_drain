@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use std::fmt::{self, Debug};
 use std::time::Duration;
 
-use log::{info, warn};
+use log::{debug, info, warn};
 use reqwest::{Client as HttpClient, ClientBuilder, RequestBuilder};
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +13,7 @@ const NOMAD_INDEX_HEADER: &str = "X-Nomad-Index";
 #[derive(Clone, Debug)]
 pub struct Client {
     address: String,
-    token: Option<String>,
+    token: Option<crate::Secret>,
     client: HttpClient,
 }
 
@@ -30,9 +31,10 @@ pub struct NodesInList {
     pub node_class: String,
     pub scheduling_eligibility: NodeEligibility,
     pub version: String,
-    pub drivers: HashMap<String, DriverInfo>,
     pub modify_index: u128,
     pub status_description: String,
+    #[cfg(all_node_details)]
+    pub drivers: HashMap<String, DriverInfo>,
 }
 
 /// Node Data returned from Nomad API
@@ -58,23 +60,12 @@ pub struct Node {
     pub drain: bool,
     /// Strategy in which the node is draining
     #[serde(default)]
-    pub drain_strategy: Option<String>,
-    /// Drivers information
-    #[serde(default)]
-    pub drivers: HashMap<String, DriverInfo>,
+    pub drain_strategy: Option<DrainStrategy>,
     /// HTTP Address
     #[serde(rename = "HTTPAddr")]
     pub http_address: String,
-    /// Links information
-    #[serde(default)]
-    pub links: Option<HashMap<String, String>>,
-    /// Metadata
-    #[serde(default)]
-    pub meta: Option<HashMap<String, String>>,
     /// Modify Index
     pub modify_index: u128,
-    /// Reserved resources
-    pub reserved: Resource,
     /// Scheduling Eligiblity
     pub scheduling_eligibility: NodeEligibility,
     /// Secret ID
@@ -89,6 +80,24 @@ pub struct Node {
     /// Whether TLS is enabled
     #[serde(rename = "TLSEnabled")]
     tls_enabled: bool,
+    /// Class of Node
+    pub node_class: Option<String>,
+
+    /// Drivers information
+    #[serde(default)]
+    #[cfg(all_node_details)]
+    pub drivers: HashMap<String, DriverInfo>,
+    /// Links information
+    #[serde(default)]
+    #[cfg(all_node_details)]
+    pub links: Option<HashMap<String, String>>,
+    /// Metadata
+    #[serde(default)]
+    #[cfg(all_node_details)]
+    pub meta: Option<HashMap<String, String>>,
+    /// Reserved resources
+    #[cfg(all_node_details)]
+    pub reserved: Resource,
     // We ignore events
     // /// Events Information
     // #[serde(default)]
@@ -109,6 +118,7 @@ pub enum NodeStatus {
 /// Node Driver Information
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
 #[serde(rename_all = "PascalCase")]
+#[cfg(all_node_details)]
 pub struct DriverInfo {
     /// Driver specific attributes
     #[serde(default)]
@@ -124,6 +134,7 @@ pub struct DriverInfo {
 }
 
 /// Node Resource Details
+#[cfg(all_node_details)]
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
 pub struct Resource {
     /// CPU in MHz
@@ -144,6 +155,7 @@ pub struct Resource {
 }
 
 /// Node Network details
+#[cfg(all_node_details)]
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
 pub struct NetworkResource {
     /// CIDR of the network
@@ -167,6 +179,7 @@ pub struct NetworkResource {
 }
 
 /// Node Port details
+#[cfg(all_node_details)]
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct Port {
@@ -181,7 +194,8 @@ pub struct Port {
 #[serde(rename_all = "PascalCase")]
 pub struct DrainStrategy {
     /// Specification for draining
-    pub drain_spec: DrainSpec,
+    #[serde(default, flatten)]
+    pub drain_spec: Option<DrainSpec>,
     /// Deadline where drain must complete
     pub force_deadline: chrono::DateTime<chrono::Utc>,
 }
@@ -215,6 +229,15 @@ pub enum NodeEligibility {
     Ineligible,
 }
 
+impl fmt::Display for NodeEligibility {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            NodeEligibility::Eligible => write!(f, "Eligible"),
+            NodeEligibility::Ineligible => write!(f, "Ineligible"),
+        }
+    }
+}
+
 #[derive(Serialize, Eq, PartialEq, Clone, Debug)]
 struct NodeEligibilityRequest<'a> {
     #[serde(rename = "NodeID")]
@@ -228,7 +251,7 @@ struct NodeEligibilityRequest<'a> {
 struct NodeEligibilityResponse {
     pub eval_create_index: u128,
     #[serde(rename = "EvalIDs")]
-    pub eval_ids: Vec<String>,
+    pub eval_ids: Option<Vec<String>>,
     pub index: u128,
     pub node_modify_index: u128,
 }
@@ -284,7 +307,7 @@ impl Client {
         Ok(Self {
             client,
             address: address.as_ref().to_string(),
-            token: token.map(|s| s.as_ref().to_string()),
+            token: token.map(|s| From::from(s.as_ref().to_string())),
         })
     }
 
@@ -303,6 +326,37 @@ impl Client {
         &self.client
     }
 
+    fn execute_request<T>(&self, request: reqwest::Request) -> Result<T, crate::Error>
+    where
+        T: serde::de::DeserializeOwned + Debug,
+    {
+        debug!("Making request: {:#?}", request);
+        let mut response = self.client.execute(request)?;
+        debug!("Received response: {:#?}", response);
+        let body = response.text()?;
+        debug!("Response body: {}", body);
+        let details = serde_json::from_str(&body)?;
+        debug!("Deserialized Details: {:#?}", details);
+        Ok(details)
+    }
+
+    fn execute_indexed_request<T>(
+        &self,
+        request: reqwest::Request,
+    ) -> Result<BlockingResponse<T>, crate::Error>
+    where
+        T: serde::de::DeserializeOwned + Debug,
+    {
+        debug!("Making request: {:#?}", request);
+        let mut response = self.client.execute(request)?;
+        debug!("Received response: {:#?}", response);
+        let body = response.text()?;
+        debug!("Response body: {}", body);
+        let details = serde_json::from_str(&body)?;
+        debug!("Deserialized Details: {:#?}", details);
+        Self::make_indexed_response(&response, details)
+    }
+
     /// Get Information about a specific Node ID
     ///
     /// Supply the optional parameters to take advantage of
@@ -313,10 +367,9 @@ impl Client {
         wait_index: Option<u64>,
         wait_timeout: Option<Duration>,
     ) -> Result<BlockingResponse<Node>, crate::Error> {
+        info!("Requesting Nomad Node {} details", node_id);
         let request = self.build_node_details_request(node_id, wait_index, wait_timeout)?;
-        let mut response = self.client.execute(request)?;
-        let details = response.json()?;
-        Self::make_indexed_response(response, details)
+        self.execute_indexed_request(request)
     }
 
     /// Build requests to get node details
@@ -342,12 +395,9 @@ impl Client {
         wait_index: Option<u64>,
         wait_timeout: Option<Duration>,
     ) -> Result<BlockingResponse<Vec<NodesInList>>, crate::Error> {
+        info!("Requesting list of Nomad nodes");
         let request = self.build_nodes_request(wait_index, wait_timeout)?;
-        let mut response = self.client.execute(request)?;
-
-        let nodes = response.json()?;
-
-        Self::make_indexed_response(response, nodes)
+        self.execute_indexed_request(request)
     }
 
     /// Build request to retrieve list of nodes
@@ -371,6 +421,7 @@ impl Client {
         &self,
         instance_id: &str,
     ) -> Result<BlockingResponse<Node>, crate::Error> {
+        info!("Finding Nomad Node ID for AWS Instance ID {}", instance_id);
         let nodes = self.nodes(None, None)?;
         let result = nodes
             .data
@@ -391,8 +442,12 @@ impl Client {
 
         let result = result.ok_or_else(|| crate::Error::NomadNodeNotFound {
             instance_id: instance_id.to_string(),
-        })?;
-        Ok(result?)
+        })??;
+        info!(
+            "AWS Instance ID {} is Nomad Node ID {}",
+            instance_id, result.data.id
+        );
+        Ok(result)
     }
 
     /// Set a node eligibility for receiving new allocations
@@ -404,6 +459,10 @@ impl Client {
         node_id: &str,
         eligibility: NodeEligibility,
     ) -> Result<(), crate::Error> {
+        info!(
+            "Setting Nomad Node ID {} eligibility to {}",
+            node_id, eligibility
+        );
         let request = NodeEligibilityRequest {
             node_id,
             eligibility,
@@ -411,7 +470,7 @@ impl Client {
 
         let request = self.build_node_eligibility_request(node_id, &request)?;
         // Request is successful if the response can be deserialized
-        let _: NodeEligibilityResponse = self.client.execute(request)?.json()?;
+        let _: NodeEligibilityResponse = self.execute_request(request)?;
         Ok(())
     }
 
@@ -439,13 +498,14 @@ impl Client {
         drain_spec: Option<DrainSpec>,
     ) -> Result<(), crate::Error> {
         let drain_spec = drain_spec.unwrap_or_default();
+        info!("Draining Node ID {} with {:#?}", node_id, drain_spec);
         let payload = NodeDrainRequest {
             node_id,
             drain_spec: &drain_spec,
         };
         let request = self.build_drain_request(node_id, &payload)?;
         // Request is successful if the response can be deserialized
-        let _: NodeDrainResponse = self.client.execute(request)?.json()?;
+        let _: NodeDrainResponse = self.execute_request(request)?;
 
         if monitor {
             self.monitor_node_drain(node_id, None)
@@ -487,9 +547,11 @@ impl Client {
         let mut strategy = None;
         let mut strategy_changed = false;
 
-        loop {
-            node = self.node_details(node_id, wait_index, Some(wait_timeout))?;
+        info!("Monitoring drain for Node ID {}", node_id);
 
+        loop {
+            info!("Checking if Node ID {} drain is complete", node_id);
+            node = self.node_details(node_id, wait_index, Some(wait_timeout))?;
             if node.data.drain_strategy.is_none() {
                 if strategy_changed {
                     info!(
@@ -499,7 +561,7 @@ impl Client {
                 } else {
                     info!("No drain strategy set for node {}", node_id);
                 }
-                return Ok(());
+                break;
             }
 
             if node.data.status == NodeStatus::Down {
@@ -508,7 +570,7 @@ impl Client {
 
             if strategy != node.data.drain_strategy {
                 info!(
-                    "Node {} drain updated: {:?}",
+                    "Node {} drain updated: {:#?}",
                     node_id, node.data.drain_strategy
                 );
             }
@@ -517,6 +579,8 @@ impl Client {
             strategy_changed = true;
             wait_index = Some(node.index);
         }
+        info!("Done monitoring drain for Node ID {}", node_id);
+        Ok(())
     }
 
     fn add_nomad_token_header(&self, request_builder: RequestBuilder) -> RequestBuilder {
@@ -537,7 +601,7 @@ impl Client {
                 match wait_timeout {
                     None => request_builder,
                     Some(timeout) => {
-                        request_builder.query(&[("wait", timeout.as_secs().to_string())])
+                        request_builder.query(&[("wait", format!("{}s", timeout.as_secs()))])
                     }
                 }
             }
@@ -546,7 +610,7 @@ impl Client {
     }
 
     fn make_indexed_response<T>(
-        response: reqwest::Response,
+        response: &reqwest::Response,
         data: T,
     ) -> Result<BlockingResponse<T>, crate::Error> {
         let index = match response.headers().get(NOMAD_INDEX_HEADER) {
@@ -597,7 +661,7 @@ mod tests {
         assert_eq!(
             format!(
                 "{}/v1/node/{}?index={}&wait={}",
-                NOMAD_ADDRESS, "id", "1234", "300"
+                NOMAD_ADDRESS, "id", "1234", "300s"
             ),
             request.url().to_string()
         );

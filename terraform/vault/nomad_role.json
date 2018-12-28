@@ -1,0 +1,7 @@
+{
+    "policies": [
+        "${lambda_policy_name}"
+    ],
+    "global": true,
+    "type": "client"
+}

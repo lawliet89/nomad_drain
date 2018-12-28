@@ -1,58 +1,32 @@
-use std::error;
-use std::fmt;
+use failure_derive::Fail;
 
 /// Error type for this library
-#[derive(Debug)]
+#[derive(Debug, Fail)]
 pub enum Error {
     /// Errors related to retrieving AWS credentials
-    CredentialsError(rusoto_core::CredentialsError),
+    #[fail(display = "Error retrieving AWS credentials: {}", _0)]
+    CredentialsError(#[cause] rusoto_core::CredentialsError),
     /// Errors related to API HTTP calls
-    ReqwestError(reqwest::Error),
+    #[fail(display = "Error making HTTP Request: {}", _0)]
+    ReqwestError(#[cause] reqwest::Error),
     /// Errors parsing headers
-    HeadersErrors(reqwest::header::ToStrError),
+    #[fail(display = "Error parsing HTTP header: {}", _0)]
+    HeadersErrors(#[cause] reqwest::header::ToStrError),
     /// Errors related to URL parsing
-    UrlParseError(url::ParseError),
+    #[fail(display = "Error Parsing URL: {}", _0)]
+    UrlParseError(#[cause] url::ParseError),
     /// Response from Vault was unexpected
+    #[fail(display = "Unexpected response from Vault: {}", _0)]
     InvalidVaultResponse(String),
     /// Nomad Node not found
+    #[fail(display = "No Nomad Node found for AWS instance ID: {}", instance_id)]
     NomadNodeNotFound { instance_id: String },
     /// Errors parsing Numbers
-    ParseIntError(std::num::ParseIntError),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Error::CredentialsError(ref inner) => {
-                write!(f, "Error retrieving AWS credentials: {}", inner)
-            }
-            Error::ReqwestError(ref inner) => inner.fmt(f),
-            Error::HeadersErrors(ref inner) => inner.fmt(f),
-            Error::UrlParseError(ref inner) => inner.fmt(f),
-            Error::InvalidVaultResponse(ref reason) => {
-                write!(f, "Response from Vault was unexpected: {}", reason)
-            }
-            Error::NomadNodeNotFound { ref instance_id } => write!(
-                f,
-                "Unable to find the nomad node with instance ID: {}",
-                instance_id
-            ),
-            Error::ParseIntError(ref inner) => inner.fmt(f),
-        }
-    }
-}
-
-impl error::Error for Error {
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match *self {
-            Error::CredentialsError(ref inner) => Some(inner),
-            Error::ReqwestError(ref inner) => Some(inner),
-            Error::HeadersErrors(ref inner) => Some(inner),
-            Error::UrlParseError(ref inner) => Some(inner),
-            Error::ParseIntError(ref inner) => Some(inner),
-            Error::InvalidVaultResponse(_) | Error::NomadNodeNotFound { .. } => None,
-        }
-    }
+    #[fail(display = "Error parsing integer: {}", _0)]
+    ParseIntError(#[cause] std::num::ParseIntError),
+    /// Errors deserializing JSON
+    #[fail(display = "Error deserializing JSON: {}", _0)]
+    JsonError(#[cause] serde_json::Error),
 }
 
 impl From<rusoto_core::CredentialsError> for Error {
@@ -82,5 +56,11 @@ impl From<url::ParseError> for Error {
 impl From<std::num::ParseIntError> for Error {
     fn from(error: std::num::ParseIntError) -> Self {
         Error::ParseIntError(error)
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(error: serde_json::Error) -> Self {
+        Error::JsonError(error)
     }
 }

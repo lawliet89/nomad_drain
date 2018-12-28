@@ -1,16 +1,19 @@
 // ENV: https://www.vaultproject.io/docs/commands/#environment-variables
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt::Debug;
 
+use log::{debug, info, warn};
 use reqwest::{Client as HttpClient, ClientBuilder};
 use serde::{Deserialize, Serialize};
 
 /// Vault API Client
 #[derive(Clone, Debug)]
 pub struct Client {
-    token: String,
+    token: crate::Secret,
     address: String,
     client: HttpClient,
+    revoke_self_on_drop: bool,
 }
 
 /// Generic Vault Response
@@ -57,7 +60,7 @@ pub struct ResponseData {
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct Authentication {
     /// The actual token
-    pub client_token: String,
+    pub client_token: crate::Secret,
     /// The accessor for the Token
     pub accessor: String,
     /// List of policies for token, including from Identity
@@ -104,6 +107,7 @@ impl Client {
     pub fn new<S1, S2>(
         vault_address: S1,
         vault_token: S2,
+        revoke_self_on_drop: bool,
         client: Option<HttpClient>,
     ) -> Result<Self, crate::Error>
     where
@@ -117,7 +121,8 @@ impl Client {
 
         Ok(Self {
             address: vault_address.as_ref().to_string(),
-            token: vault_token.as_ref().to_string(),
+            token: crate::Secret(vault_token.as_ref().to_string()),
+            revoke_self_on_drop,
             client,
         })
     }
@@ -137,6 +142,30 @@ impl Client {
         &self.client
     }
 
+    fn execute_request<T>(client: &HttpClient, request: reqwest::Request) -> Result<T, crate::Error>
+    where
+        T: serde::de::DeserializeOwned + Debug,
+    {
+        debug!("Executing request: {:#?}", request);
+        let mut response = client.execute(request)?;
+        debug!("Response received: {:#?}", response);
+        let body = response.text()?;
+        debug!("Response body: {}", body);
+        let result = serde_json::from_str(&body)?;
+        debug!("Deserialized body: {:#?}", result);
+        Ok(result)
+    }
+
+    fn execute_request_no_body(
+        client: &HttpClient,
+        request: reqwest::Request,
+    ) -> Result<(), crate::Error> {
+        debug!("Executing request: {:#?}", request);
+        let response = client.execute(request)?;
+        debug!("Response received: {:#?}", response);
+        Ok(())
+    }
+
     /// Login with AWS IAM authentication method. Returns a Vault token on success
     ///
     /// - `address`: Address of Vault Server. Include the scheme (e.g. `https`) and the host with an
@@ -154,6 +183,10 @@ impl Client {
         aws_payload: &crate::aws::VaultAwsAuthIamPayload,
         client: Option<HttpClient>,
     ) -> Result<Self, crate::Error> {
+        info!(
+            "Logging in to Vault with AWS Credentials at path `{}` and role `{}",
+            aws_auth_path, aws_auth_role
+        );
         let client = match client {
             Some(client) => client,
             None => ClientBuilder::new().build()?,
@@ -166,7 +199,7 @@ impl Client {
             aws_payload,
             &client,
         )?;
-        let response: Response = client.execute(request)?.json()?;
+        let response: Response = Self::execute_request(&client, request)?;
         let token = match response {
             Response::Error { errors } => {
                 Err(crate::Error::InvalidVaultResponse(errors.join("; ")))?
@@ -179,9 +212,11 @@ impl Client {
             )),
         }?;
 
+        info!("Vault authentication successful. Received Vault Token");
         Ok(Self {
             address: vault_address.to_string(),
             token,
+            revoke_self_on_drop: true,
             client,
         })
     }
@@ -210,10 +245,14 @@ impl Client {
         &self,
         nomad_path: &str,
         nomad_role: &str,
-    ) -> Result<String, crate::Error> {
+    ) -> Result<crate::Secret, crate::Error> {
+        info!(
+            "Retrieving Nomad Token from Secrets engine mounted at `{}` with role `{}`",
+            nomad_path, nomad_role
+        );
         let request = self.build_nomad_token_request(nomad_path, nomad_role)?;
-        let response: Response = self.client.execute(request)?.json()?;
-        match response {
+        let response: Response = Self::execute_request(&self.client, request)?;
+        Ok(From::from(match response {
             Response::Error { errors } => {
                 Err(crate::Error::InvalidVaultResponse(errors.join("; ")))?
             }
@@ -222,11 +261,34 @@ impl Client {
                 ..
             }) => data.remove("secret_id").ok_or_else(|| {
                 crate::Error::InvalidVaultResponse("Missing Nomad token from response".to_string())
-            }),
+            })?,
             _ => Err(crate::Error::InvalidVaultResponse(
                 "Missing secrets data".to_string(),
             ))?,
-        }
+        }))
+    }
+
+    /// Revoke the Vault token itself
+    ///
+    /// If successful, the Vault Token can no longer be used
+    pub fn revoke_self(&self) -> Result<(), crate::Error> {
+        info!("Revoking self Vault Token");
+
+        let request = self.build_revoke_self_request()?;
+        // HTTP 204 is returned
+        Self::execute_request_no_body(&self.client, request)?;
+        Ok(())
+    }
+
+    fn build_revoke_self_request(&self) -> Result<reqwest::Request, crate::Error> {
+        let vault_address = url::Url::parse(self.address())?;
+        let vault_address = vault_address.join("/v1/auth/token/revoke-self")?;
+
+        Ok(self
+            .client
+            .post(vault_address)
+            .header("X-Vault-Token", self.token.as_str())
+            .build()?)
     }
 
     fn build_nomad_token_request(
@@ -246,6 +308,18 @@ impl Client {
     }
 }
 
+impl Drop for Client {
+    fn drop(&mut self) {
+        if self.revoke_self_on_drop {
+            info!("Vault Client is being dropped. Revoking its own Token");
+            match self.revoke_self() {
+                Ok(()) => {}
+                Err(e) => warn!("Error revoking self: {}", e),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -259,7 +333,7 @@ pub(crate) mod tests {
     #[test]
     fn login_aws_iam_request_is_built_properly() -> Result<(), crate::Error> {
         let address = vault_address();
-        let aws_payload = crate::aws::tests::vault_aws_iam_payload(None)?;
+        let aws_payload = crate::aws::tests::vault_aws_iam_payload(None, None)?;
         let request = Client::build_login_aws_iam_request(
             &address,
             "aws",
@@ -284,7 +358,8 @@ pub(crate) mod tests {
     #[test]
     fn login_aws_with_vault_is_successful() -> Result<(), crate::Error> {
         let address = vault_address();
-        let aws_payload = crate::aws::tests::vault_aws_iam_payload(Some("vault.example.com"))?;
+        let aws_payload =
+            crate::aws::tests::vault_aws_iam_payload(Some("vault.example.com"), None)?;
 
         let client = Client::login_aws_iam(&address, "aws", "default", &aws_payload, None)?;
         assert!(!client.token().is_empty());
@@ -318,7 +393,7 @@ pub(crate) mod tests {
 
     #[test]
     fn nomad_token_request_is_built_properly() -> Result<(), crate::Error> {
-        let client = Client::new(vault_address(), "vault_token", None)?;
+        let client = Client::new(vault_address(), "vault_token", false, None)?;
         let request = client.build_nomad_token_request("nomad", "default")?;
 
         assert_eq!(
