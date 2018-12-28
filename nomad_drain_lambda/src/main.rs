@@ -3,6 +3,7 @@ mod error;
 use std::borrow::Cow;
 
 use aws_lambda_events::event::autoscaling::AutoScalingEvent as Event;
+use failure::Fail;
 use lambda_runtime::{error::HandlerError, lambda, Context};
 use log::{error, info};
 use rusoto_autoscaling::{Autoscaling, AutoscalingClient, CompleteLifecycleActionType};
@@ -176,8 +177,13 @@ fn lambda_wrapper(event: Event, context: Context) -> Result<HandlerResult, Handl
     match lambda_handler(&event, &context) {
         Ok(result) => Ok(result),
         Err(e) => {
-            error!("{}", e);
-            Err(context.new_error(&e.to_string()))
+            let mut error_output = vec![format!("{}", e)];
+            if let Some(backtrace) = e.backtrace() {
+                error_output.push(format!("Backtrace: {}", backtrace));
+            }
+            let error_output = error_output.join("\n");
+            error!("{}", error_output);
+            Err(context.new_error(&error_output))
         }
     }
 }

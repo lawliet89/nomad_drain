@@ -170,10 +170,7 @@ impl Client {
         aws_payload: &crate::aws::VaultAwsAuthIamPayload,
         client: Option<HttpClient>,
     ) -> Result<Self, crate::Error> {
-        info!(
-            "Logging in to Vault with AWS Credentials at path `{}` and role `{}",
-            aws_auth_path, aws_auth_role
-        );
+        info!("Logging in to Vault with AWS Credentials at path `{}` and role `{}", aws_auth_path, aws_auth_role);
         let client = match client {
             Some(client) => client,
             None => ClientBuilder::new().build()?,
@@ -232,10 +229,7 @@ impl Client {
         nomad_path: &str,
         nomad_role: &str,
     ) -> Result<crate::Secret, crate::Error> {
-        info!(
-            "Retrieving Nomad Token from Secrets engine mounted at `{}` with role `{}`",
-            nomad_path, nomad_role
-        );
+        info!("Retrieving Nomad Token from Secrets engine mounted at `{}` with role `{}`", nomad_path, nomad_role);
         let request = self.build_nomad_token_request(nomad_path, nomad_role)?;
         let response: Response = Self::execute_request(&self.client, request)?;
         Ok(From::from(match response {

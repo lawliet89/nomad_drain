@@ -83,6 +83,7 @@ resource "aws_lambda_function" "drain" {
       NOMAD_PATH        = "${var.nomad_path}"
       NOMAD_ROLE        = "${var.nomad_role}"
       RUST_LOG          = "${var.log_level}"
+      RUST_BACKTRACE    = "${var.enable_backtrace ? "1": "0"}"
     }
   }
 

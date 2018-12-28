@@ -79,6 +79,11 @@ variable "log_level" {
   default     = "nomad_drain=info,bootstrap=info"
 }
 
+variable "enable_backtrace" {
+  description = "Enable backtrace generation during errors"
+  default     = false
+}
+
 variable "tags" {
   description = "Map of tags for resources"
 

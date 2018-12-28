@@ -1,43 +1,22 @@
-use std::error;
-use std::fmt;
+use failure_derive::Fail;
 
-#[derive(Debug)]
+#[derive(Debug, Fail)]
 pub enum Error {
-    ConfigurationDecodingError(envy::Error),
-    LibError(nomad_drain::Error),
-    JsonError(serde_json::Error),
+    #[fail(
+        display = "Error deserializing configuration from the environment: {}",
+        _0
+    )]
+    ConfigurationDecodingError(#[cause] envy::Error),
+    #[fail(display = "{}", _0)]
+    LibError(#[cause] nomad_drain::Error),
+    #[fail(display = "Error deserializing JSON: {}", _0)]
+    JsonError(#[cause] serde_json::Error),
+    #[fail(display = "Configuration option `{}` was expected but is missing", _0)]
     MissingConfiguration(String),
-    AsgLifecycleError(rusoto_autoscaling::CompleteLifecycleActionError),
+    #[fail(display = "Error completing ASG Lifecycle action: {}", _0)]
+    AsgLifecycleError(#[cause] rusoto_autoscaling::CompleteLifecycleActionError),
+    #[fail(display = "Expecting an Instance Terminating event, but got something else instead")]
     UnexpectedLifecycleTransition,
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Error::ConfigurationDecodingError(ref inner) => inner.fmt(f),
-            Error::LibError(ref inner) => inner.fmt(f),
-            Error::JsonError(ref inner) => inner.fmt(f),
-            Error::AsgLifecycleError(ref inner) => inner.fmt(f),
-            Error::MissingConfiguration(ref field) => write!(
-                f,
-                "Configuration `{}` is required but was not provided",
-                field
-            ),
-            Error::UnexpectedLifecycleTransition => write!(f, "Expecting an Instance Terminating event, but lambda was fired with an Instance Launching Event instead")
-        }
-    }
-}
-
-impl error::Error for Error {
-    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
-        match *self {
-            Error::ConfigurationDecodingError(ref inner) => Some(inner),
-            Error::LibError(ref inner) => Some(inner),
-            Error::JsonError(ref inner) => Some(inner),
-            Error::AsgLifecycleError(ref inner) => Some(inner),
-            Error::MissingConfiguration(_) | Error::UnexpectedLifecycleTransition => None,
-        }
-    }
 }
 
 impl From<envy::Error> for Error {

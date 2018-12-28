@@ -31,9 +31,10 @@ pub struct NodesInList {
     pub node_class: String,
     pub scheduling_eligibility: NodeEligibility,
     pub version: String,
-    pub drivers: HashMap<String, DriverInfo>,
     pub modify_index: u128,
     pub status_description: String,
+    #[cfg(all_node_details)]
+    pub drivers: HashMap<String, DriverInfo>,
 }
 
 /// Node Data returned from Nomad API
@@ -59,23 +60,12 @@ pub struct Node {
     pub drain: bool,
     /// Strategy in which the node is draining
     #[serde(default)]
-    pub drain_strategy: Option<String>,
-    /// Drivers information
-    #[serde(default)]
-    pub drivers: HashMap<String, DriverInfo>,
+    pub drain_strategy: Option<DrainStrategy>,
     /// HTTP Address
     #[serde(rename = "HTTPAddr")]
     pub http_address: String,
-    /// Links information
-    #[serde(default)]
-    pub links: Option<HashMap<String, String>>,
-    /// Metadata
-    #[serde(default)]
-    pub meta: Option<HashMap<String, String>>,
     /// Modify Index
     pub modify_index: u128,
-    /// Reserved resources
-    pub reserved: Resource,
     /// Scheduling Eligiblity
     pub scheduling_eligibility: NodeEligibility,
     /// Secret ID
@@ -90,6 +80,24 @@ pub struct Node {
     /// Whether TLS is enabled
     #[serde(rename = "TLSEnabled")]
     tls_enabled: bool,
+    /// Class of Node
+    pub node_class: Option<String>,
+
+    /// Drivers information
+    #[serde(default)]
+    #[cfg(all_node_details)]
+    pub drivers: HashMap<String, DriverInfo>,
+    /// Links information
+    #[serde(default)]
+    #[cfg(all_node_details)]
+    pub links: Option<HashMap<String, String>>,
+    /// Metadata
+    #[serde(default)]
+    #[cfg(all_node_details)]
+    pub meta: Option<HashMap<String, String>>,
+    /// Reserved resources
+    #[cfg(all_node_details)]
+    pub reserved: Resource,
     // We ignore events
     // /// Events Information
     // #[serde(default)]
@@ -110,6 +118,7 @@ pub enum NodeStatus {
 /// Node Driver Information
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
 #[serde(rename_all = "PascalCase")]
+#[cfg(all_node_details)]
 pub struct DriverInfo {
     /// Driver specific attributes
     #[serde(default)]
@@ -125,6 +134,7 @@ pub struct DriverInfo {
 }
 
 /// Node Resource Details
+#[cfg(all_node_details)]
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
 pub struct Resource {
     /// CPU in MHz
@@ -145,6 +155,7 @@ pub struct Resource {
 }
 
 /// Node Network details
+#[cfg(all_node_details)]
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
 pub struct NetworkResource {
     /// CIDR of the network
@@ -168,6 +179,7 @@ pub struct NetworkResource {
 }
 
 /// Node Port details
+#[cfg(all_node_details)]
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct Port {
@@ -185,6 +197,9 @@ pub struct DrainStrategy {
     pub drain_spec: DrainSpec,
     /// Deadline where drain must complete
     pub force_deadline: chrono::DateTime<chrono::Utc>,
+    /// Whether system jobs are ignored
+    #[serde(default)]
+    pub ignore_system_jobs: bool,
 }
 
 /// Specification for draining

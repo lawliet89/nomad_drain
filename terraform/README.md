@@ -1,6 +1,7 @@
 # Nomad Node Drain Terraform Module
 
 - Manually allow egress and ingress to the API endpoints
+- Optional VPCE for AWS API
 
 ## Inputs
 
