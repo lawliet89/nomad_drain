@@ -79,6 +79,11 @@ variable "log_level" {
   default     = "nomad_drain=info,bootstrap=info"
 }
 
+variable "lifecycle_hook_timeout" {
+  description = "Maximum amount of time the lifecycle hook is allowed to run in seconds."
+  default     = 900
+}
+
 variable "enable_backtrace" {
   description = "Enable backtrace generation during errors"
   default     = false

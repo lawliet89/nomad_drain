@@ -82,63 +82,80 @@ impl Config {
         Ok(envy::from_env()?)
     }
 
-    pub fn new_nomad_client(&self) -> Result<NomadClient, Error> {
+    const fn default_use_nomad_token() -> bool {
+        true
+    }
+}
+
+#[derive(Debug)]
+struct Clients {
+    pub nomad_client: NomadClient,
+    pub vault_client: Option<VaultClient>,
+}
+
+impl Clients {
+    pub fn new(config: &Config) -> Result<Self, Error> {
+        let mut vault_client = None;
+
         info!("Building Nomad Client");
-        let nomad_token = if self.use_nomad_token {
-            info!("Using Nomad token");
-            Some(self.get_nomad_token()?)
-        } else {
-            info!("No Nomad token in use");
-            None
-        };
+        let nomad_token =
+            if config.use_nomad_token {
+                info!("Using Nomad token");
 
-        let nomad_client = NomadClient::new(&self.nomad_address, nomad_token.as_ref(), None)?;
+                Some(match config.nomad_token {
+                    Some(ref token) => Cow::Borrowed(token.as_str()),
+                    None => {
+                        info!("No Nomad Token configured. Retrieving from Vault");
+                        vault_client = Some(Self::get_vault_client(config)?);
 
-        Ok(nomad_client)
+                        let nomad_path =
+                            config.vault_config.nomad_path.as_ref().ok_or_else(|| {
+                                Error::MissingConfiguration("nomad_path".to_string())
+                            })?;
+                        let nomad_role =
+                            config.vault_config.nomad_role.as_ref().ok_or_else(|| {
+                                Error::MissingConfiguration("nomad_role".to_string())
+                            })?;
+
+                        Cow::Owned(
+                            vault_client
+                                .as_ref()
+                                .unwrap_or_else(|| unreachable!("Should not be reachable!"))
+                                .get_nomad_token(nomad_path, nomad_role)?
+                                .0,
+                        )
+                    }
+                })
+            } else {
+                info!("No Nomad token in use");
+                None
+            };
+
+        let nomad_client = NomadClient::new(&config.nomad_address, nomad_token.as_ref(), None)?;
+
+        Ok(Self {
+            nomad_client,
+            vault_client,
+        })
     }
 
-    fn get_nomad_token(&self) -> Result<Cow<str>, Error> {
-        match self.nomad_token {
-            Some(ref token) => Ok(Cow::Borrowed(token.as_str())),
-            None => {
-                info!("No Nomad Token configured. Retrieving from Vault");
-                let vault_client = self.get_vault_client()?;
-
-                let nomad_path = self
-                    .vault_config
-                    .nomad_path
-                    .as_ref()
-                    .ok_or_else(|| Error::MissingConfiguration("nomad_path".to_string()))?;
-                let nomad_role = self
-                    .vault_config
-                    .nomad_role
-                    .as_ref()
-                    .ok_or_else(|| Error::MissingConfiguration("nomad_role".to_string()))?;
-
-                Ok(Cow::Owned(
-                    vault_client.get_nomad_token(nomad_path, nomad_role)?.0,
-                ))
-            }
-        }
-    }
-
-    fn get_vault_client(&self) -> Result<VaultClient, Error> {
-        let vault_address = self
+    fn get_vault_client(config: &Config) -> Result<VaultClient, Error> {
+        let vault_address = config
             .vault_config
             .vault_address
             .as_ref()
             .ok_or_else(|| Error::MissingConfiguration("vault_address".to_string()))?;
 
-        match self.vault_config.vault_token {
-            Some(ref token) => Ok(VaultClient::new(vault_address, token, None)?),
+        match config.vault_config.vault_token {
+            Some(ref token) => Ok(VaultClient::new(vault_address, token, false, None)?),
             None => {
                 info!("No Vault Token configured. Using AWS Credentials to retrieve from Vault");
-                let vault_auth_path = self
+                let vault_auth_path = config
                     .vault_config
                     .auth_path
                     .as_ref()
                     .ok_or_else(|| Error::MissingConfiguration("auth_path".to_string()))?;
-                let vault_auth_role = self
+                let vault_auth_role = config
                     .vault_config
                     .auth_role
                     .as_ref()
@@ -151,7 +168,8 @@ impl Config {
                     vault_auth_path,
                     vault_auth_role,
                     &aws_credentials,
-                    self.vault_config
+                    config
+                        .vault_config
                         .auth_header_value
                         .as_ref()
                         .map(|s| s.as_str()),
@@ -159,10 +177,6 @@ impl Config {
                 )?)
             }
         }
-    }
-
-    const fn default_use_nomad_token() -> bool {
-        true
     }
 }
 
@@ -192,7 +206,7 @@ fn lambda_handler(event: &Event, _context: &Context) -> Result<HandlerResult, Er
     let config = Config::from_environment()?;
 
     info!("Configuration loaded: {:#?}", config);
-    let nomad_client = config.new_nomad_client()?;
+    let clients = Clients::new(&config)?;
 
     let asg_event: AsgEventDetails = serde_json::from_value(serde_json::to_value(&event.detail)?)?;
     info!("Event Details: {:#?}", asg_event);
@@ -203,17 +217,19 @@ fn lambda_handler(event: &Event, _context: &Context) -> Result<HandlerResult, Er
 
     info!("Instance ID {} is being terminated", asg_event.instance_id);
 
-    let node = nomad_client.find_node_by_instance_id(&asg_event.instance_id)?;
+    let node = clients
+        .nomad_client
+        .find_node_by_instance_id(&asg_event.instance_id)?;
 
     info!("Setting Node ID {} to be ineligible", node.data.id);
-    nomad_client.set_node_eligibility(
+    clients.nomad_client.set_node_eligibility(
         &node.data.id,
         nomad_drain::nomad::NodeEligibility::Ineligible,
     )?;
 
     info!("Draining Nomad Node ID {}", node.data.id);
     // Lambda has a max runtime of 900s. Let's set a deadline for 600s
-    nomad_client.set_node_drain(
+    clients.nomad_client.set_node_drain(
         &node.data.id,
         true,
         Some(nomad_drain::nomad::DrainSpec {

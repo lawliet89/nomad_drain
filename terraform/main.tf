@@ -138,5 +138,5 @@ resource "aws_autoscaling_lifecycle_hook" "terminate" {
   default_result         = "CONTINUE"
   lifecycle_transition   = "autoscaling:EC2_INSTANCE_TERMINATING"
   notification_metadata  = "${var.notification_metadata}"
-  heartbeat_timeout      = 3600
+  heartbeat_timeout      = "${var.lifecycle_hook_timeout}"
 }

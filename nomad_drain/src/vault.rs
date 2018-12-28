@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use log::{debug, info};
+use log::{debug, info, warn};
 use reqwest::{Client as HttpClient, ClientBuilder};
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +13,7 @@ pub struct Client {
     token: crate::Secret,
     address: String,
     client: HttpClient,
+    revoke_self_on_drop: bool,
 }
 
 /// Generic Vault Response
@@ -106,6 +107,7 @@ impl Client {
     pub fn new<S1, S2>(
         vault_address: S1,
         vault_token: S2,
+        revoke_self_on_drop: bool,
         client: Option<HttpClient>,
     ) -> Result<Self, crate::Error>
     where
@@ -120,6 +122,7 @@ impl Client {
         Ok(Self {
             address: vault_address.as_ref().to_string(),
             token: crate::Secret(vault_token.as_ref().to_string()),
+            revoke_self_on_drop,
             client,
         })
     }
@@ -153,6 +156,16 @@ impl Client {
         Ok(result)
     }
 
+    fn execute_request_no_body(
+        client: &HttpClient,
+        request: reqwest::Request,
+    ) -> Result<(), crate::Error> {
+        debug!("Executing request: {:#?}", request);
+        let response = client.execute(request)?;
+        debug!("Response received: {:#?}", response);
+        Ok(())
+    }
+
     /// Login with AWS IAM authentication method. Returns a Vault token on success
     ///
     /// - `address`: Address of Vault Server. Include the scheme (e.g. `https`) and the host with an
@@ -170,7 +183,10 @@ impl Client {
         aws_payload: &crate::aws::VaultAwsAuthIamPayload,
         client: Option<HttpClient>,
     ) -> Result<Self, crate::Error> {
-        info!("Logging in to Vault with AWS Credentials at path `{}` and role `{}", aws_auth_path, aws_auth_role);
+        info!(
+            "Logging in to Vault with AWS Credentials at path `{}` and role `{}",
+            aws_auth_path, aws_auth_role
+        );
         let client = match client {
             Some(client) => client,
             None => ClientBuilder::new().build()?,
@@ -200,6 +216,7 @@ impl Client {
         Ok(Self {
             address: vault_address.to_string(),
             token,
+            revoke_self_on_drop: true,
             client,
         })
     }
@@ -229,7 +246,10 @@ impl Client {
         nomad_path: &str,
         nomad_role: &str,
     ) -> Result<crate::Secret, crate::Error> {
-        info!("Retrieving Nomad Token from Secrets engine mounted at `{}` with role `{}`", nomad_path, nomad_role);
+        info!(
+            "Retrieving Nomad Token from Secrets engine mounted at `{}` with role `{}`",
+            nomad_path, nomad_role
+        );
         let request = self.build_nomad_token_request(nomad_path, nomad_role)?;
         let response: Response = Self::execute_request(&self.client, request)?;
         Ok(From::from(match response {
@@ -248,6 +268,29 @@ impl Client {
         }))
     }
 
+    /// Revoke the Vault token itself
+    ///
+    /// If successful, the Vault Token can no longer be used
+    pub fn revoke_self(&self) -> Result<(), crate::Error> {
+        info!("Revoking self Vault Token");
+
+        let request = self.build_revoke_self_request()?;
+        // HTTP 204 is returned
+        Self::execute_request_no_body(&self.client, request)?;
+        Ok(())
+    }
+
+    fn build_revoke_self_request(&self) -> Result<reqwest::Request, crate::Error> {
+        let vault_address = url::Url::parse(self.address())?;
+        let vault_address = vault_address.join("/v1/auth/token/revoke-self")?;
+
+        Ok(self
+            .client
+            .post(vault_address)
+            .header("X-Vault-Token", self.token.as_str())
+            .build()?)
+    }
+
     fn build_nomad_token_request(
         &self,
         nomad_path: &str,
@@ -262,6 +305,18 @@ impl Client {
             .get(vault_address)
             .header("X-Vault-Token", self.token.as_str())
             .build()?)
+    }
+}
+
+impl Drop for Client {
+    fn drop(&mut self) {
+        if self.revoke_self_on_drop {
+            info!("Vault Client is being dropped. Revoking its own Token");
+            match self.revoke_self() {
+                Ok(()) => {}
+                Err(e) => warn!("Error revoking self: {}", e),
+            }
+        }
     }
 }
 
@@ -338,7 +393,7 @@ pub(crate) mod tests {
 
     #[test]
     fn nomad_token_request_is_built_properly() -> Result<(), crate::Error> {
-        let client = Client::new(vault_address(), "vault_token", None)?;
+        let client = Client::new(vault_address(), "vault_token", false, None)?;
         let request = client.build_nomad_token_request("nomad", "default")?;
 
         assert_eq!(
