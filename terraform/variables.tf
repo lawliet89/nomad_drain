@@ -84,6 +84,11 @@ variable "enable_backtrace" {
   default     = false
 }
 
+variable "notification_metadata" {
+  description = "Additional Metadata to pass to the Lambda on notification"
+  default     = ""
+}
+
 variable "tags" {
   description = "Map of tags for resources"
 

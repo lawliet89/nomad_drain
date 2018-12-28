@@ -131,3 +131,12 @@ data "aws_iam_policy_document" "asg_lifecycle" {
     ]
   }
 }
+
+resource "aws_autoscaling_lifecycle_hook" "terminate" {
+  name                   = "${var.lambda_name}"
+  autoscaling_group_name = "${var.asg_name}"
+  default_result         = "CONTINUE"
+  lifecycle_transition   = "autoscaling:EC2_INSTANCE_TERMINATING"
+  notification_metadata  = "${var.notification_metadata}"
+  heartbeat_timeout      = 3600
+}

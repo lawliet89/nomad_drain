@@ -194,12 +194,10 @@ pub struct Port {
 #[serde(rename_all = "PascalCase")]
 pub struct DrainStrategy {
     /// Specification for draining
-    pub drain_spec: DrainSpec,
+    #[serde(default, flatten)]
+    pub drain_spec: Option<DrainSpec>,
     /// Deadline where drain must complete
     pub force_deadline: chrono::DateTime<chrono::Utc>,
-    /// Whether system jobs are ignored
-    #[serde(default)]
-    pub ignore_system_jobs: bool,
 }
 
 /// Specification for draining
@@ -552,8 +550,8 @@ impl Client {
         info!("Monitoring drain for Node ID {}", node_id);
 
         loop {
+            info!("Checking if Node ID {} drain is complete", node_id);
             node = self.node_details(node_id, wait_index, Some(wait_timeout))?;
-
             if node.data.drain_strategy.is_none() {
                 if strategy_changed {
                     info!(
@@ -603,7 +601,7 @@ impl Client {
                 match wait_timeout {
                     None => request_builder,
                     Some(timeout) => {
-                        request_builder.query(&[("wait", timeout.as_secs().to_string())])
+                        request_builder.query(&[("wait", format!("{}s", timeout.as_secs()))])
                     }
                 }
             }
@@ -663,7 +661,7 @@ mod tests {
         assert_eq!(
             format!(
                 "{}/v1/node/{}?index={}&wait={}",
-                NOMAD_ADDRESS, "id", "1234", "300"
+                NOMAD_ADDRESS, "id", "1234", "300s"
             ),
             request.url().to_string()
         );
