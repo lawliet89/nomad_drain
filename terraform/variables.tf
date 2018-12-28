@@ -11,14 +11,6 @@ variable "vpc_subnets" {
   type        = "list"
 }
 
-variable "nomad_server_security_group" {
-  description = "Security Group ID for Nomad servers"
-}
-
-variable "vault_security_group" {
-  description = "Security Group ID for Vault"
-}
-
 variable "nomad_address" {
   description = "Address to Nomad Server API"
 }
@@ -72,16 +64,6 @@ variable "lambda_timeout" {
   default     = 900
 }
 
-variable "nomad_api_port" {
-  description = "Port for the Nomad API"
-  default     = 4646
-}
-
-variable "vault_api_port" {
-  description = "Port for Vault API"
-  default     = 8200
-}
-
 variable "vault_policy_name" {
   description = "Name of the Vault Policy to allow the lambda to retrieve Nomad tokens"
   default     = "nomad_drain_lambda"
@@ -90,6 +72,11 @@ variable "vault_policy_name" {
 variable "aws_auth_header_value" {
   description = "Header value that must be included when authenticating via AWS, if set"
   default     = ""
+}
+
+variable "log_level" {
+  description = "Log level for the Lambda. Refer to https://docs.rs/env_logger/0.6.0/env_logger/#enabling-logging for details."
+  default     = "nomad_drain=info,bootstrap=info"
 }
 
 variable "tags" {

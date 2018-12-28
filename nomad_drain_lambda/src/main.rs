@@ -4,34 +4,39 @@ use std::borrow::Cow;
 
 use aws_lambda_events::event::autoscaling::AutoScalingEvent as Event;
 use lambda_runtime::{error::HandlerError, lambda, Context};
-use log::info;
+use log::{error, info};
 use rusoto_autoscaling::{Autoscaling, AutoscalingClient, CompleteLifecycleActionType};
 use serde::{Deserialize, Serialize};
 
 use nomad_drain::nomad::Client as NomadClient;
 use nomad_drain::vault::Client as VaultClient;
+use nomad_drain::Secret;
 
 use crate::error::Error;
 
 #[derive(Deserialize, Debug, Clone, Eq, PartialEq)]
 struct Config {
     /// Address of Nomad server
+    /// Deserialized from `NOMAD_ADDR`
     #[serde(rename = "nomad_addr")]
     nomad_address: String,
 
+    /// Use Nomad Token or not
     #[serde(default = "Config::default_use_nomad_token")]
     use_nomad_token: bool,
 
     /// Nomad token, if any
-    nomad_token: Option<String>,
+    nomad_token: Option<Secret>,
 
     #[serde(flatten)]
     vault_config: VaultConfig,
+    // Implicitly: RUST_LOG via `env_logger.
+    // See https://docs.rs/env_logger/0.6.0/env_logger/#enabling-logging
 }
 
 #[derive(Deserialize, Debug, Clone, Eq, PartialEq)]
 struct VaultConfig {
-    vault_token: Option<String>,
+    vault_token: Option<Secret>,
 
     #[serde(rename = "vault_addr")]
     vault_address: Option<String>,
@@ -48,7 +53,6 @@ struct VaultConfig {
 #[serde(rename_all = "PascalCase")]
 struct AsgEventDetails {
     pub lifecycle_action_token: String,
-    pub account_id: String,
     pub auto_scaling_group_name: String,
     #[serde(rename = "EC2InstanceId")]
     pub instance_id: String,
@@ -78,9 +82,12 @@ impl Config {
     }
 
     pub fn new_nomad_client(&self) -> Result<NomadClient, Error> {
+        info!("Building Nomad Client");
         let nomad_token = if self.use_nomad_token {
+            info!("Using Nomad token");
             Some(self.get_nomad_token()?)
         } else {
+            info!("No Nomad token in use");
             None
         };
 
@@ -93,6 +100,7 @@ impl Config {
         match self.nomad_token {
             Some(ref token) => Ok(Cow::Borrowed(token.as_str())),
             None => {
+                info!("No Nomad Token configured. Retrieving from Vault");
                 let vault_client = self.get_vault_client()?;
 
                 let nomad_path = self
@@ -102,12 +110,12 @@ impl Config {
                     .ok_or_else(|| Error::MissingConfiguration("nomad_path".to_string()))?;
                 let nomad_role = self
                     .vault_config
-                    .nomad_path
+                    .nomad_role
                     .as_ref()
                     .ok_or_else(|| Error::MissingConfiguration("nomad_role".to_string()))?;
 
                 Ok(Cow::Owned(
-                    vault_client.get_nomad_token(nomad_path, nomad_role)?,
+                    vault_client.get_nomad_token(nomad_path, nomad_role)?.0,
                 ))
             }
         }
@@ -123,6 +131,7 @@ impl Config {
         match self.vault_config.vault_token {
             Some(ref token) => Ok(VaultClient::new(vault_address, token, None)?),
             None => {
+                info!("No Vault Token configured. Using AWS Credentials to retrieve from Vault");
                 let vault_auth_path = self
                     .vault_config
                     .auth_path
@@ -157,8 +166,8 @@ impl Config {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     lambda!(lambda_wrapper);
-
     Ok(())
 }
 
@@ -166,29 +175,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn lambda_wrapper(event: Event, context: Context) -> Result<HandlerResult, HandlerError> {
     match lambda_handler(&event, &context) {
         Ok(result) => Ok(result),
-        Err(e) => Err(context.new_error(&e.to_string())),
+        Err(e) => {
+            error!("{}", e);
+            Err(context.new_error(&e.to_string()))
+        }
     }
 }
 
 fn lambda_handler(event: &Event, _context: &Context) -> Result<HandlerResult, Error> {
     let config = Config::from_environment()?;
+
+    info!("Configuration loaded: {:#?}", config);
     let nomad_client = config.new_nomad_client()?;
 
-    let lifecycle_hook: AsgEventDetails =
-        serde_json::from_value(serde_json::to_value(&event.detail)?)?;
+    let asg_event: AsgEventDetails = serde_json::from_value(serde_json::to_value(&event.detail)?)?;
+    info!("Event Details: {:#?}", asg_event);
 
-    if lifecycle_hook.lifecycle_transition != AsgLifecycleTransition::InstanceTerminating {
+    if asg_event.lifecycle_transition != AsgLifecycleTransition::InstanceTerminating {
         Err(Error::UnexpectedLifecycleTransition)?;
     }
 
-    info!(
-        "Instance ID {} is being terminated",
-        lifecycle_hook.instance_id
-    );
+    info!("Instance ID {} is being terminated", asg_event.instance_id);
 
-    let node = nomad_client.find_node_by_instance_id(&lifecycle_hook.instance_id)?;
+    let node = nomad_client.find_node_by_instance_id(&asg_event.instance_id)?;
+
+    info!("Setting Node ID {} to be ineligible", node.data.id);
+    nomad_client.set_node_eligibility(
+        &node.data.id,
+        nomad_drain::nomad::NodeEligibility::Ineligible,
+    )?;
+
     info!("Draining Nomad Node ID {}", node.data.id);
-
     // Lambda has a max runtime of 900s. Let's set a deadline for 600s
     nomad_client.set_node_drain(
         &node.data.id,
@@ -201,22 +218,25 @@ fn lambda_handler(event: &Event, _context: &Context) -> Result<HandlerResult, Er
 
     info!("Node ID {} Drained", node.data.id);
 
+    info!("Marking lifecycle action complete");
     // Complete the lifecycle action
     let asg_client = AutoscalingClient::new(Default::default());
     let _ = asg_client
         .complete_lifecycle_action(CompleteLifecycleActionType {
-            auto_scaling_group_name: lifecycle_hook.auto_scaling_group_name.to_string(),
-            instance_id: Some(lifecycle_hook.instance_id.to_string()),
+            auto_scaling_group_name: asg_event.auto_scaling_group_name.to_string(),
+            instance_id: Some(asg_event.instance_id.to_string()),
             lifecycle_action_result: "CONTINUE".to_string(),
-            lifecycle_action_token: Some(lifecycle_hook.lifecycle_action_token.to_string()),
-            lifecycle_hook_name: lifecycle_hook.lifecycle_hook_name.to_string(),
+            lifecycle_action_token: Some(asg_event.lifecycle_action_token.to_string()),
+            lifecycle_hook_name: asg_event.lifecycle_hook_name.to_string(),
         })
         .sync()?;
 
     info!("Lifecycle action complete");
 
+    // Revoke self
+
     Ok(HandlerResult {
-        instance_id: lifecycle_hook.instance_id.to_string(),
+        instance_id: asg_event.instance_id.to_string(),
         node_id: node.data.id.to_string(),
         timestamp: chrono::Utc::now(),
     })

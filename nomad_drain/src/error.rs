@@ -18,6 +18,8 @@ pub enum Error {
     NomadNodeNotFound { instance_id: String },
     /// Errors parsing Numbers
     ParseIntError(std::num::ParseIntError),
+    /// Errors deserializing JSON
+    JsonError(serde_json::Error),
 }
 
 impl fmt::Display for Error {
@@ -38,6 +40,7 @@ impl fmt::Display for Error {
                 instance_id
             ),
             Error::ParseIntError(ref inner) => inner.fmt(f),
+            Error::JsonError(ref inner) => inner.fmt(f),
         }
     }
 }
@@ -50,6 +53,7 @@ impl error::Error for Error {
             Error::HeadersErrors(ref inner) => Some(inner),
             Error::UrlParseError(ref inner) => Some(inner),
             Error::ParseIntError(ref inner) => Some(inner),
+            Error::JsonError(ref inner) => Some(inner),
             Error::InvalidVaultResponse(_) | Error::NomadNodeNotFound { .. } => None,
         }
     }
@@ -82,5 +86,11 @@ impl From<url::ParseError> for Error {
 impl From<std::num::ParseIntError> for Error {
     fn from(error: std::num::ParseIntError) -> Self {
         Error::ParseIntError(error)
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(error: serde_json::Error) -> Self {
+        Error::JsonError(error)
     }
 }

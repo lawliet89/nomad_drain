@@ -50,28 +50,6 @@ resource "aws_security_group" "lambda" {
   tags = "${merge(var.tags, map("Name", var.lambda_name))}"
 }
 
-resource "aws_security_group_rule" "nomad" {
-  type                     = "egress"
-  from_port                = "${var.nomad_api_port}"
-  to_port                  = "${var.nomad_api_port}"
-  protocol                 = "tcp"
-  source_security_group_id = "${var.nomad_server_security_group}"
-  description              = "Access Nomad Server API"
-
-  security_group_id = "${aws_security_group.lambda.id}"
-}
-
-resource "aws_security_group_rule" "vault" {
-  type                     = "egress"
-  from_port                = "${var.vault_api_port}"
-  to_port                  = "${var.vault_api_port}"
-  protocol                 = "tcp"
-  source_security_group_id = "${var.vault_security_group}"
-  description              = "Access Vault Server API"
-
-  security_group_id = "${aws_security_group.lambda.id}"
-}
-
 resource "aws_lambda_function" "drain" {
   depends_on = [
     "aws_iam_role_policy_attachment.lambda_logging",
@@ -104,6 +82,7 @@ resource "aws_lambda_function" "drain" {
       AUTH_HEADER_VALUE = "${var.aws_auth_header_value}"
       NOMAD_PATH        = "${var.nomad_path}"
       NOMAD_ROLE        = "${var.nomad_role}"
+      RUST_LOG          = "${var.log_level}"
     }
   }
 

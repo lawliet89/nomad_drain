@@ -1,5 +1,7 @@
 # Nomad Node Drain Terraform Module
 
+- Manually allow egress and ingress to the API endpoints
+
 ## Inputs
 
 | Name | Description | Type | Default | Required |
